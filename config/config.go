@@ -90,6 +90,7 @@ const (
 	BackendLlama  = "llama"
 	BackendTabby  = "tabby"
 	BackendVLLM   = "vllm"
+	BackendInproc = "inproc"
 )
 
 // validBackends is the set of backend ids the gateway knows how to talk to.
@@ -98,6 +99,7 @@ var validBackends = map[string]bool{
 	BackendLlama:  true,
 	BackendTabby:  true,
 	BackendVLLM:   true,
+	BackendInproc: true,
 }
 
 // Load reads a YAML config from path, applies defaults, and validates it. It
@@ -190,7 +192,14 @@ func (c *Config) Validate() error {
 		if !validBackends[m.Backend] {
 			return fmt.Errorf("config: model %q has unknown backend %q", name, m.Backend)
 		}
-		if m.BaseURL == "" {
+		// The in-process engine has no network endpoint; it loads a GGUF from
+		// disk, so it wants a model_path param instead of a base_url. Every other
+		// backend forwards over HTTP and needs the URL.
+		if m.Backend == BackendInproc {
+			if _, ok := m.Params["model_path"]; !ok {
+				return fmt.Errorf("config: inproc model %q is missing params.model_path", name)
+			}
+		} else if m.BaseURL == "" {
 			return fmt.Errorf("config: model %q is missing base_url", name)
 		}
 		if m.UpstreamModel == "" {

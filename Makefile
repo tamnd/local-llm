@@ -11,8 +11,16 @@ LDFLAGS  := -X main.version=$(VERSION)
 all: check build
 
 .PHONY: build
-build: ## Build the llmgw binary into ./bin
+build: ## Build the llmgw binary into ./bin (stub engine, no cgo)
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/llmgw
+
+.PHONY: build-llama
+build-llama: ## Build llmgw with the in-process cgo engine (needs libllama, see scripts/build-libllama.sh)
+	CGO_ENABLED=1 $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/llmgw
+
+.PHONY: libllama
+libllama: ## Compile libllama with CUDA for the in-process engine
+	scripts/build-libllama.sh
 
 .PHONY: test
 test: ## Run the test suite with the race detector

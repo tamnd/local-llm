@@ -97,7 +97,11 @@ func New(p Params) (Runner, error) {
 	if p.NCtx > 0 {
 		cparams.n_ctx = C.uint32_t(p.NCtx)
 	}
-	cparams.flash_attn = C.bool(p.FlashAttn)
+	if p.FlashAttn {
+		cparams.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
+	} else {
+		cparams.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_AUTO
+	}
 	if k := cacheType(p.CacheTypeK); k != 0 {
 		cparams.type_k = k
 	}
@@ -143,7 +147,11 @@ func (r *cgoRunner) loadDraft(p Params, mparams C.struct_llama_model_params) err
 	}
 	dparams := C.llama_context_default_params()
 	dparams.n_ctx = C.uint32_t(r.nCtx)
-	dparams.flash_attn = C.bool(p.FlashAttn)
+	if p.FlashAttn {
+		dparams.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_ENABLED
+	} else {
+		dparams.flash_attn_type = C.LLAMA_FLASH_ATTN_TYPE_AUTO
+	}
 	dctx := C.llama_init_from_model(dm, dparams)
 	if dctx == nil {
 		C.llama_model_free(dm)
@@ -368,7 +376,7 @@ func (r *cgoRunner) generateSpeculative(ctx context.Context, prompt []C.llama_to
 				break
 			}
 		}
-		if !stopHit && C.llama_vocab_is_eog(r.vocab, C.llama_token(bonus)) {
+		if !stopHit && bool(C.llama_vocab_is_eog(r.vocab, C.llama_token(bonus))) {
 			stats.StopReason = "stop"
 			if tail := stop.flush(); tail != "" {
 				emit(tail)

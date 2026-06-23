@@ -1,58 +1,200 @@
-# GoReleaser v2 config. A pushed v* tag builds llmgw for Linux, macOS, and
-# Windows (the box itself is Windows) and publishes a GitHub release with
-# checksums. The gateway is pure Go with one small dependency, so cross-compiling
-# needs no CGO.
+# GoReleaser turns one tag push into everything a user might install from: raw
+# archives, Linux packages (deb, rpm, apk), a multi-arch container image, and
+# entries for the package managers (Homebrew, Scoop). `git tag vX.Y.Z && git
+# push --tags` fans out to all of them through .github/workflows/release.yml.
+#
+# The gateway is pure Go with one small dependency, so every artifact here is the
+# default CGO-free build. The in-process cgo engine needs CUDA and is built on
+# the box itself (make build-llama), never in the release pipeline.
+#
+# Publish steps that push to a repository we do not own yet (the Homebrew tap,
+# the Scoop bucket) self-disable when their token is absent. A release with no
+# extra secrets still produces every downloadable artifact and the container
+# image; each manager lights up the moment its repository and token exist.
 version: 2
 
 project_name: local-llm
 
 before:
+  # Only fetch modules; never `go mod tidy` during a release, the tree is kept
+  # tidy in CI.
   hooks:
-    - go mod tidy
+    - go mod download
 
 builds:
   - id: llmgw
-    main: ./cmd/llmgw
     binary: llmgw
+    main: ./cmd/llmgw
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      # No 32-bit or Windows/arm64 target; the box is amd64 Windows.
-      - goos: windows
-        goarch: arm64
+    flags:
+      - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      - -s -w
+      - -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
 
 archives:
-  - id: llmgw
-    formats: [tar.gz]
+  # tar.gz everywhere except a zip on Windows. The config and the model manifest
+  # ride along so a downloaded archive has a runnable starting point.
+  - id: default
+    ids:
+      - llmgw
+    name_template: "local-llm_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
         formats: [zip]
     files:
-      - README.md
       - LICENSE
+      - README.md
       - configs/llmgw.yaml
       - catalog/models.manifest.yaml
 
+nfpms:
+  # One nfpm definition emits the deb, rpm, and apk for every Linux build. llmgw
+  # is a single binary the owner runs against a config; there is no bundled unit
+  # file, so the package is the binary, its license, and the example config.
+  - id: linux-packages
+    package_name: local-llm
+    ids:
+      - llmgw
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: tamnd
+    homepage: https://github.com/tamnd/local-llm
+    maintainer: Duc-Tam Nguyen <tamnd87@gmail.com>
+    description: One OpenAI-compatible API in front of many local inference backends, hot-swapping one GPU.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: utils
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/doc/local-llm/LICENSE
+      - src: ./configs/llmgw.yaml
+        dst: /usr/share/doc/local-llm/llmgw.yaml
+
+dockers_v2:
+  # One multi-platform image built with buildx. GoReleaser stages the prebuilt
+  # binaries under per-platform directories in the build context and the
+  # Dockerfile copies the right one through $TARGETPLATFORM.
+  - images:
+      - ghcr.io/tamnd/local-llm
+    tags:
+      - "{{ .Version }}"
+      - latest
+    dockerfile: Dockerfile
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "One OpenAI-compatible API in front of many local inference backends, hot-swapping one GPU"
+      org.opencontainers.image.url: "https://github.com/tamnd/local-llm"
+      org.opencontainers.image.source: "https://github.com/tamnd/local-llm"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: "MIT"
+
+homebrew_casks:
+  # Homebrew cask pushed to the tap repository. Self-disables until
+  # HOMEBREW_TAP_GITHUB_TOKEN (a PAT with write to tamnd/homebrew-tap) is set,
+  # so a tokenless release still writes the cask into dist for inspection.
+  - name: local-llm
+    ids:
+      - default
+    repository:
+      owner: tamnd
+      name: homebrew-tap
+      token: '{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}'
+    directory: Casks
+    homepage: https://github.com/tamnd/local-llm
+    description: One OpenAI-compatible API in front of many local inference backends, hot-swapping one GPU
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: Duc-Tam Nguyen
+      email: tamnd87@gmail.com
+
+scoops:
+  # Scoop manifest for Windows, pushed to the bucket repository.
+  - ids:
+      - default
+    repository:
+      owner: tamnd
+      name: scoop-bucket
+      token: '{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}'
+    directory: bucket
+    homepage: https://github.com/tamnd/local-llm
+    description: One OpenAI-compatible API in front of many local inference backends, hot-swapping one GPU
+    license: MIT
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: Duc-Tam Nguyen
+      email: tamnd87@gmail.com
+
 checksum:
   name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  # A CycloneDX SBOM per archive via syft; the release workflow installs it.
+  - id: archive
+    artifacts: archive
+
+signs:
+  # Keyless cosign signature over the checksum file. It runs only on a real
+  # release in CI, where the workflow grants the OIDC token cosign needs.
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
 
 changelog:
   sort: asc
+  use: github
   filters:
     exclude:
       - "^docs:"
       - "^test:"
+      - "^chore:"
       - "^ci:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
 
 release:
+  github:
+    owner: tamnd
+    name: local-llm
   draft: false
   prerelease: auto

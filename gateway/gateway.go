@@ -133,6 +133,15 @@ func (g *Gateway) handleInference(path string) http.HandlerFunc {
 			return
 		}
 
+		// The client sent an alias or a canonical id; the upstream runtime only
+		// knows its own model name. Rewrite the "model" field to the upstream
+		// name before forwarding, which is the contract the adapters rely on.
+		body, err = rewriteModel(body, resolved.Entry.UpstreamModel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", "request body is not valid JSON")
+			return
+		}
+
 		release, err := g.mgr.Acquire(r.Context(), resolved.ID, resolved.Entry)
 		if err != nil {
 			g.writeManagerError(w, err)
@@ -157,6 +166,24 @@ func (g *Gateway) handleInference(path string) http.HandlerFunc {
 		// Forward has already written the response (status, body, or stream). On
 		// error mid-stream there is nothing more we can safely write.
 	}
+}
+
+// rewriteModel sets the "model" field of an OpenAI-compatible request body to
+// the backend's upstream name, leaving every other field byte-for-byte intact.
+// The client addresses the gateway with an alias or a canonical id; the upstream
+// runtime only answers to its own model name, so the body has to carry that name
+// by the time the adapter forwards it.
+func rewriteModel(body []byte, upstream string) ([]byte, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, err
+	}
+	name, err := json.Marshal(upstream)
+	if err != nil {
+		return nil, err
+	}
+	obj["model"] = name
+	return json.Marshal(obj)
 }
 
 // handleStatus reports full residency for the admin plane.

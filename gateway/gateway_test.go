@@ -85,6 +85,41 @@ func TestChatCompletionFlows(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "cmpl-1") {
 		t.Errorf("body not forwarded: %s", rec.Body.String())
 	}
+	// The client said "default"; the upstream must see the runtime's own name.
+	var fwd struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(fb.lastBody, &fwd); err != nil {
+		t.Fatalf("decode forwarded body: %v", err)
+	}
+	if fwd.Model != "qwen3:30b-a3b" {
+		t.Errorf("forwarded model = %q, want upstream qwen3:30b-a3b", fwd.Model)
+	}
+}
+
+func TestRewriteModelPreservesOtherFields(t *testing.T) {
+	in := []byte(`{"model":"chat","stream":true,"messages":[{"role":"user","content":"hi"}],"temperature":0.2}`)
+	out, err := rewriteModel(in, "qwen3:30b-a3b")
+	if err != nil {
+		t.Fatalf("rewriteModel: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["model"] != "qwen3:30b-a3b" {
+		t.Errorf("model = %v, want qwen3:30b-a3b", got["model"])
+	}
+	if got["stream"] != true || got["temperature"] != 0.2 {
+		t.Errorf("other fields changed: %+v", got)
+	}
+	msgs, ok := got["messages"].([]any)
+	if !ok || len(msgs) != 1 {
+		t.Errorf("messages not preserved: %+v", got["messages"])
+	}
+	if _, err := rewriteModel([]byte(`not json`), "x"); err == nil {
+		t.Error("rewriteModel accepted invalid JSON")
+	}
 }
 
 func TestUnauthorizedRejected(t *testing.T) {

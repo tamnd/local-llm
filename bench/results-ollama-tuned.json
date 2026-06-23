@@ -1,0 +1,86 @@
+{
+  "generated_at": "2026-06-23T17:30:53Z",
+  "gpu": "NVIDIA GeForce RTX 4090, 566.36",
+  "idle_vram_mb": 294,
+  "num_predict": 256,
+  "measured": 3,
+  "results": [
+    {
+      "model": "qwen3:30b-a3b",
+      "decode_tok_s": 218.7,
+      "prompt_tok_s": 17652.8,
+      "cold_load_ms": 9168,
+      "warm_ttft_ms": 199,
+      "resident_vram_mb": 19738,
+      "prompt_tokens": 205,
+      "output_tokens": 256,
+      "runs": 3
+    },
+    {
+      "model": "qwen2.5-coder:32b",
+      "decode_tok_s": 25.6,
+      "prompt_tok_s": 5056.7,
+      "cold_load_ms": 11598,
+      "warm_ttft_ms": 232,
+      "resident_vram_mb": 22160,
+      "prompt_tokens": 224,
+      "output_tokens": 256,
+      "runs": 3
+    },
+    {
+      "model": "deepseek-r1:32b",
+      "decode_tok_s": 25.7,
+      "prompt_tok_s": 4437.1,
+      "cold_load_ms": 10377,
+      "warm_ttft_ms": 235,
+      "resident_vram_mb": 22160,
+      "prompt_tokens": 198,
+      "output_tokens": 256,
+      "runs": 3
+    },
+    {
+      "model": "gemma4:26b",
+      "decode_tok_s": 149.2,
+      "prompt_tok_s": 6641.9,
+      "cold_load_ms": 10777,
+      "warm_ttft_ms": 543,
+      "resident_vram_mb": 18470,
+      "prompt_tokens": 216,
+      "output_tokens": 256,
+      "runs": 3
+    },
+    {
+      "model": "gemma4:12b",
+      "decode_tok_s": 81,
+      "prompt_tok_s": 5910.5,
+      "cold_load_ms": 5548,
+      "warm_ttft_ms": 526,
+      "resident_vram_mb": 8752,
+      "prompt_tokens": 216,
+      "output_tokens": 256,
+      "runs": 3
+    },
+    {
+      "model": "qwen3:8b",
+      "decode_tok_s": 146.3,
+      "prompt_tok_s": 20775.2,
+      "cold_load_ms": 3662,
+      "warm_ttft_ms": 205,
+      "resident_vram_mb": 7806,
+      "prompt_tokens": 205,
+      "output_tokens": 256,
+      "runs": 3
+    },
+    {
+      "model": "qwen3:0.6b",
+      "decode_tok_s": 541,
+      "prompt_tok_s": 36037.7,
+      "cold_load_ms": 1845,
+      "warm_ttft_ms": 202,
+      "resident_vram_mb": 2984,
+      "prompt_tokens": 205,
+      "output_tokens": 256,
+      "runs": 3
+    }
+  ]
+}

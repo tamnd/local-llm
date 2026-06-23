@@ -1,0 +1,43 @@
+# Provisioning manifest: what each backend must have on disk before the gateway
+# config that references it can serve. The provision scripts (scripts/06-models)
+# read this to pull/download models idempotently. This is not the gateway config;
+# it is the source-of-truth list the box is provisioned against. Keep the
+# gateway's models block (configs/llmgw.yaml) in sync with the ids here.
+
+# Ollama models are pulled by name from the Ollama registry.
+ollama:
+  models:
+    - name: "qwen3:30b-a3b"
+      note: "general chat + tools, MoE"
+    - name: "qwen3-coder:30b-a3b"
+      note: "code-tuned sibling"
+    - name: "nomic-embed-text"
+      note: "embeddings, stays resident (coexist)"
+
+# TabbyAPI serves EXL2 quants downloaded into its models dir. source is the
+# Hugging Face repo; dir is the folder name TabbyAPI loads by (matches
+# upstream_model in the gateway config).
+tabby:
+  models_dir: "C:/models/exl2"
+  models:
+    - dir: "Qwen3-32B-exl2-4.0bpw"
+      source: "hf:turboderp/Qwen3-32B-exl2"
+      revision: "4.0bpw"
+      note: "dense 32B at 4bpw, higher quality than the MoE"
+
+# llama-server loads a single GGUF by path. Listed for completeness; not wired
+# into the default gateway config. Swap in by adding a models entry with
+# backend: llama and base_url pointing at the llama-server port.
+llama:
+  models_dir: "C:/models/gguf"
+  models:
+    - file: "Qwen3-14B-Q6_K.gguf"
+      source: "hf:Qwen/Qwen3-14B-GGUF"
+      note: "example dense GGUF for the llama-server backend"
+
+# vLLM loads from a local AWQ/GPTQ checkout or an HF id. Process-driven backend;
+# slow to start, fast to serve. Example only.
+vllm:
+  models:
+    - id: "Qwen/Qwen3-30B-A3B-AWQ"
+      note: "AWQ MoE for the vLLM backend, --quantization awq"

@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,6 +119,58 @@ func TestOllamaLoadUnload(t *testing.T) {
 	}
 	if loads != 1 || unloads != 1 {
 		t.Errorf("loads=%d unloads=%d, want 1/1", loads, unloads)
+	}
+}
+
+// TestOllamaLoadEmbedderFallsBack covers an embedding-only model: /api/generate
+// is rejected, so Load must warm it through /api/embed instead.
+func TestOllamaLoadEmbedderFallsBack(t *testing.T) {
+	var sawGenerate, sawEmbed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/generate":
+			sawGenerate = true
+			http.Error(w, `{"error":"\"nomic-embed-text\" does not support generate"}`, http.StatusBadRequest)
+		case "/api/embed":
+			sawEmbed = true
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"embeddings":[[0.1]]}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	o := &Ollama{proxy: newProxy("t")}
+	entry := config.ModelEntry{Backend: "ollama", BaseURL: srv.URL, UpstreamModel: "nomic-embed-text", Coexist: true}
+	if err := o.Load(context.Background(), entry); err != nil {
+		t.Fatalf("Load fell through embed fallback: %v", err)
+	}
+	if !sawGenerate || !sawEmbed {
+		t.Errorf("expected generate then embed: generate=%v embed=%v", sawGenerate, sawEmbed)
+	}
+}
+
+// TestOllamaLoadEmbedFallbackPropagatesOOM makes sure a real OOM on the generate
+// warm-up is surfaced, not masked by an embed retry.
+func TestOllamaLoadEmbedFallbackPropagatesOOM(t *testing.T) {
+	var sawEmbed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/embed" {
+			sawEmbed = true
+		}
+		http.Error(w, `{"error":"CUDA error: out of memory"}`, http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	o := &Ollama{proxy: newProxy("t")}
+	entry := config.ModelEntry{Backend: "ollama", BaseURL: srv.URL, UpstreamModel: "qwen2.5-coder:32b"}
+	err := o.Load(context.Background(), entry)
+	if !errors.Is(err, ErrOOM) {
+		t.Fatalf("Load err = %v, want ErrOOM", err)
+	}
+	if sawEmbed {
+		t.Error("OOM should short-circuit before the embed fallback")
 	}
 }
 

@@ -1,0 +1,10 @@
+title       = "local-llm"
+baseURL     = "https://local-llm.tamnd.com/"
+description = "local-llm turns one RTX 4090 into a private, always-on, OpenAI-compatible inference endpoint reached only over Tailscale. One gateway in front of many backends, hot-swapping a 24 GB GPU between models larger than fit together."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/local-llm"

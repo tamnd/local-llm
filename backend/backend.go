@@ -84,6 +84,7 @@ func NewRegistry(version string) Registry {
 		config.BackendLlama:  &Llama{proxy: p, procs: newProcTable()},
 		config.BackendTabby:  &Tabby{proxy: p},
 		config.BackendVLLM:   &VLLM{proxy: p, procs: newProcTable()},
+		config.BackendInproc: newInProc(version),
 	}
 }
 

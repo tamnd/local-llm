@@ -41,3 +41,25 @@ vllm:
   models:
     - id: "Qwen/Qwen3-30B-A3B-AWQ"
       note: "AWQ MoE for the vLLM backend, --quantization awq"
+
+# inproc loads a GGUF directly into the gateway process via the in-process cgo
+# engine (the zero-proxy high-throughput path, spec 2065 docs 15 to 17). file is
+# the GGUF the params.model_path in the gateway config points at; draft is the
+# optional vocab-matched speculative draft. Needs make build-llama. Unsloth
+# dynamic quants (UD-*) give the best quality per byte at the same decode speed.
+inproc:
+  models_dir: "/models/gguf"
+  models:
+    - file: "Qwen3-Coder-30B-UD-Q4_K_XL.gguf"
+      source: "hf:unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+      draft: "Qwen3-1.7B-Q4_K_M.gguf"
+      draft_source: "hf:Qwen/Qwen3-1.7B-GGUF"
+      note: "dense-feel coder MoE with a vocab-matched 1.7B draft for greedy speculation"
+    - file: "Qwen3.6-27B-UD-Q4_K_XL.gguf"
+      source: "hf:unsloth/Qwen3.6-27B-GGUF"
+      draft: "Qwen3-1.7B-Q4_K_M.gguf"
+      draft_source: "hf:Qwen/Qwen3-1.7B-GGUF"
+      note: "current dense general model, draft-accelerated"
+    - file: "nomic-embed-text-v1.5.Q8_0.gguf"
+      source: "hf:nomic-ai/nomic-embed-text-v1.5-GGUF"
+      note: "embeddings in-process, coexist with the main slot (embedding: true)"

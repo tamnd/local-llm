@@ -1,0 +1,52 @@
+# Developer entry points. CI runs the same steps (see .github/workflows/ci.yml),
+# so a green `make check` locally means a green pipeline.
+
+GO       ?= go
+BINARY   := llmgw
+PKG      := ./...
+VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS  := -X main.version=$(VERSION)
+
+.PHONY: all
+all: check build
+
+.PHONY: build
+build: ## Build the llmgw binary into ./bin
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/llmgw
+
+.PHONY: test
+test: ## Run the test suite with the race detector
+	$(GO) test -race -count=1 $(PKG)
+
+.PHONY: vet
+vet: ## Run go vet
+	$(GO) vet $(PKG)
+
+.PHONY: fmt
+fmt: ## Format all Go files
+	gofmt -w .
+
+.PHONY: fmt-check
+fmt-check: ## Fail if any file is not gofmt-clean
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then echo "needs gofmt:"; echo "$$unformatted"; exit 1; fi
+
+.PHONY: lint
+lint: ## Run golangci-lint
+	golangci-lint run $(PKG)
+
+.PHONY: check
+check: fmt-check vet test lint ## Run every gate CI runs
+
+.PHONY: run
+run: build ## Build and run against configs/llmgw.yaml
+	./bin/$(BINARY) -config configs/llmgw.yaml
+
+.PHONY: clean
+clean:
+	rm -rf bin dist
+
+.PHONY: help
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'

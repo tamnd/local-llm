@@ -1,0 +1,45 @@
+# Performance gates for the box. The bench harness (scripts/bench) drives a
+# fixed prompt set through the gateway and fails CI on the box if a model
+# regresses past these floors. The numbers are the measured baselines from spec
+# 2065 (carried from spec 1991), with headroom so normal run-to-run variance
+# does not flap the gate. decode_tok_s is steady-state decode throughput at
+# batch 1; ttft_ms is time to first token on a short prompt; swap_s is the
+# gateway's model swap wall time (drain + unload + load) measured end to end.
+
+defaults:
+  prompt_tokens: 512
+  max_tokens: 256
+  warmup_runs: 1
+  measured_runs: 5
+
+models:
+  qwen3-30b-a3b:
+    backend: ollama
+    decode_tok_s_min: 190    # measured ~217-240, floor leaves margin
+    ttft_ms_max: 700
+    swap_s_max: 20
+
+  qwen3-coder-30b-a3b:
+    backend: ollama
+    decode_tok_s_min: 190
+    ttft_ms_max: 700
+    swap_s_max: 20
+
+  qwen3-32b-exl2:
+    backend: tabby
+    decode_tok_s_min: 40     # measured ~47-48 at 4bpw
+    ttft_ms_max: 1200
+    swap_s_max: 35           # EXL2 load is slower than an Ollama pull-from-cache
+
+  nomic-embed-text:
+    backend: ollama
+    # Embeddings are throughput-measured differently; gate only on liveness and
+    # that it stays resident alongside the main slot.
+    coexist: true
+    embed_batch: 32
+    embed_ms_max: 250
+
+# Box-level gates checked once per bench run, independent of any single model.
+system:
+  vram_budget_mb: 22528      # must never be exceeded; a breach fails the run
+  idle_vram_mb_max: 1500     # with no model loaded, VRAM should be near zero

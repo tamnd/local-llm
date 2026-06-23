@@ -1,0 +1,86 @@
+# llmgw gateway config for the RTX 4090 box. The schema is config.Config; every
+# field documented here maps to a struct tag in config/config.go. A model the
+# gateway should serve needs an entry under models; clients select it by the
+# key (or by an alias below). VRAM numbers are the measured residency from spec
+# 2065, used by the manager to decide what can coexist with the main slot.
+
+bind:
+  # api_addr binds the data plane. 0.0.0.0 is fine because the only route to this
+  # port is the tailnet; the box's firewall blocks the port on every other
+  # interface. Set this to the Tailscale IP to be strict.
+  api_addr: "0.0.0.0:8888"
+  # admin_addr stays on loopback so force-load and force-unload are unreachable
+  # from the network.
+  admin_addr: "127.0.0.1:8889"
+
+auth:
+  # Replace these before serving. Generate with: openssl rand -hex 24
+  tokens:
+    - "REPLACE_ME_data_plane_token"
+  # admin_token guards /admin/*. Leave empty to disable the admin plane.
+  admin_token: "REPLACE_ME_admin_token"
+
+# default_model answers requests that omit the model field. It may be an alias.
+default_model: chat
+
+aliases:
+  chat: qwen3-30b-a3b
+  coder: qwen3-coder-30b-a3b
+  reasoning: qwen3-32b-exl2
+  embed: nomic-embed-text
+
+models:
+  # General chat and tool use. MoE, ~217-240 tok/s decode on the 4090 (spec 1991).
+  qwen3-30b-a3b:
+    backend: ollama
+    base_url: "http://127.0.0.1:11434"
+    upstream_model: "qwen3:30b-a3b"
+    vram_mb: 19000
+    params:
+      keep_alive: "30m"
+
+  # Code-tuned sibling, same MoE shape and footprint.
+  qwen3-coder-30b-a3b:
+    backend: ollama
+    base_url: "http://127.0.0.1:11434"
+    upstream_model: "qwen3-coder:30b-a3b"
+    vram_mb: 19000
+    params:
+      keep_alive: "30m"
+
+  # Dense 32B at 4bpw EXL2 through TabbyAPI, ~47-48 tok/s. Higher quality, slower.
+  qwen3-32b-exl2:
+    backend: tabby
+    base_url: "http://127.0.0.1:5000"
+    upstream_model: "Qwen3-32B-exl2-4.0bpw"
+    vram_mb: 20500
+    params:
+      admin_key: "REPLACE_ME_tabby_admin_key"
+      max_seq_len: 32768
+      cache_mode: "Q8"
+
+  # Embeddings. Small enough to stay resident alongside the main slot, so RAG
+  # traffic does not evict the chat model.
+  nomic-embed-text:
+    backend: ollama
+    base_url: "http://127.0.0.1:11434"
+    upstream_model: "nomic-embed-text"
+    vram_mb: 350
+    coexist: true
+    params:
+      keep_alive: "60m"
+
+manager:
+  hot_swap: true          # unload the outgoing model before loading the next
+  vram_budget_mb: 22528   # 22 GB minus a 512 MiB margin on the 24 GB card
+  queue_max: 32           # requests allowed to wait behind an in-flight swap
+  drain_timeout_s: 120    # how long to wait for in-flight requests before a swap
+  load_timeout_s: 300     # process-driven backends (vLLM) can take minutes to load
+  unload_timeout_s: 30
+
+logging:
+  level: info
+  format: json
+  file: "/var/log/llmgw/requests.log"  # empty logs to stdout instead
+  rotate_mb: 100
+  keep_files: 5

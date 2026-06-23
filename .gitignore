@@ -1,10 +1,18 @@
+# build output
+/bin/
+/dist/
+
 # binaries / blobs
 *.gguf
 *.exe
 *.zip
 models/
 *.log
+*.log.[0-9]
 .env
 __pycache__/
 *.pyc
 .venv/
+
+# local config overrides (never commit real tokens)
+config/llmgw.local.yaml

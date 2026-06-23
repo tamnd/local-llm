@@ -1,0 +1,58 @@
+# GoReleaser v2 config. A pushed v* tag builds llmgw for Linux, macOS, and
+# Windows (the box itself is Windows) and publishes a GitHub release with
+# checksums. The gateway is pure Go with one small dependency, so cross-compiling
+# needs no CGO.
+version: 2
+
+project_name: local-llm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: llmgw
+    main: ./cmd/llmgw
+    binary: llmgw
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # No 32-bit or Windows/arm64 target; the box is amd64 Windows.
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: llmgw
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - configs/llmgw.yaml
+      - catalog/models.manifest.yaml
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  draft: false
+  prerelease: auto

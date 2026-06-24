@@ -24,7 +24,7 @@ BUILD="$SRC/build"
 
 # Pin to a release tag. Bump deliberately and re-measure; see doc 17 on the
 # CUDA 13.2 gibberish regression that makes the toolchain version matter.
-LLAMA_CPP_REF="${LLAMA_CPP_REF:-b6500}"
+LLAMA_CPP_REF="${LLAMA_CPP_REF:-b9780}"
 CUDA_ARCH="${CUDA_ARCH:-89}" # Ada / RTX 4090 is sm_89
 
 mkdir -p "$THIRD_PARTY"

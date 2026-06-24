@@ -86,11 +86,15 @@ mkdir -p "${VLLM_MODEL_DIR}"
 # network-online.target so Tailscale is up before the gateway starts.
 #
 # Port assignments (matching configs/llmgw.yaml):
-#   8100 - qwen3.6:35b (Qwen3-30B-A3B-Instruct) - MoE path
-#   8101 - gpt-oss:20b (openai-community/gpt-oss-20b) - MoE path
+#   8100 - qwen3.6:35b  -> Qwen/Qwen3.6-35B-A3B-FP8 (FP8 quant, fits in 24 GB)
+#   8101 - gpt-oss:20b  -> openai/gpt-oss-20b (native MXFP4 MoE)
+#
+# Qwen3.6-35B-A3B uses gated-delta-network SSM layers; set --max-num-seqs=512
+# to keep the recurrent state cache from exceeding VRAM (default 1024 is too
+# large for a 24 GB card with FP8 weights already resident).
 
 write_unit() {
-    local name="$1" model="$2" port="$3" mem="$4"
+    local name="$1" model="$2" port="$3" mem="$4" extra_flags="${5:-}"
     cat > "/etc/systemd/system/vllm-${name}.service" <<UNIT
 [Unit]
 Description=vLLM ${name} on port ${port}
@@ -102,15 +106,15 @@ Type=simple
 Environment=HF_HOME=${VLLM_MODEL_DIR}/.cache/huggingface
 Environment=HF_HUB_ENABLE_HF_TRANSFER=1
 Environment=CUDA_VISIBLE_DEVICES=0
-ExecStart=${PY} -m vllm.entrypoints.openai.api_server \\
-    --model ${model} \\
-    --host 127.0.0.1 \\
-    --port ${port} \\
-    --gpu-memory-utilization ${mem} \\
-    --tensor-parallel-size 1 \\
-    --max-model-len 32768 \\
-    --enable-chunked-prefill \\
-    --enforce-eager
+ExecStart=${PY} -m vllm.entrypoints.openai.api_server \
+    --model ${model} \
+    --host 127.0.0.1 \
+    --port ${port} \
+    --gpu-memory-utilization ${mem} \
+    --tensor-parallel-size 1 \
+    --max-model-len 32768 \
+    --enable-chunked-prefill \
+    ${extra_flags}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -123,8 +127,8 @@ UNIT
     echo "wrote /etc/systemd/system/vllm-${name}.service"
 }
 
-write_unit "qwen3-35b"  "Qwen/Qwen3-30B-A3B-Instruct"            8100 "0.85"
-write_unit "gpt-oss-20b" "openai-community/gpt-oss-20b"           8101 "0.70"
+write_unit "qwen3-35b"   "Qwen/Qwen3.6-35B-A3B-FP8"  8100 "0.85" "--max-num-seqs 512"
+write_unit "gpt-oss-20b" "openai/gpt-oss-20b"          8101 "0.70" "--kv-cache-dtype fp8"
 
 systemctl daemon-reload
 echo ""

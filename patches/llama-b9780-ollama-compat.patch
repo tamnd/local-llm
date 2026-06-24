@@ -1,0 +1,317 @@
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index 4a52d9772..7f058437c 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -113,7 +113,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_HUNYUAN_DENSE,    "hunyuan-dense"    },
+     { LLM_ARCH_HUNYUAN_VL,       "hunyuan_vl"       },
+     { LLM_ARCH_SMOLLM3,          "smollm3"          },
+-    { LLM_ARCH_OPENAI_MOE,       "gpt-oss"          },
++    { LLM_ARCH_OPENAI_MOE,       "gptoss"          },
+     { LLM_ARCH_LFM2,             "lfm2"             },
+     { LLM_ARCH_LFM2MOE,          "lfm2moe"          },
+     { LLM_ARCH_DREAM,            "dream"            },
+@@ -367,6 +367,7 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
+     { LLM_TENSOR_ATTN_K,                                 "blk.%d.attn_k" },
+     { LLM_TENSOR_ATTN_V,                                 "blk.%d.attn_v" },
+     { LLM_TENSOR_ATTN_OUT,                               "blk.%d.attn_output" },
++    { LLM_TENSOR_ATTN_OUT_PROJ,                          "blk.%d.attn_out" },
+     { LLM_TENSOR_ATTN_ROT_EMBD,                          "blk.%d.attn_rot_embd" },
+     { LLM_TENSOR_FFN_GATE_INP,                           "blk.%d.ffn_gate_inp" },
+     { LLM_TENSOR_FFN_NORM,                               "blk.%d.ffn_norm" },
+@@ -604,6 +605,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+     {LLM_TENSOR_ATTN_V,                     {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_QKV,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_OUT,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
++    {LLM_TENSOR_ATTN_OUT_PROJ,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_ATTN_GATE,                  {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_FFN_GATE,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+     {LLM_TENSOR_FFN_DOWN,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+@@ -854,6 +856,16 @@ llm_arch llm_arch_from_string(const std::string & name) {
+         }
+     }
+ 
++    // Ollama GGUF blobs sometimes use names without hyphens (e.g. "gptoss" vs "gpt-oss").
++    // Check stripped versions before giving up.
++    static const std::map<std::string, llm_arch> ARCH_ALIASES = {
++        {"gpt-oss", LLM_ARCH_OPENAI_MOE},
++    };
++    auto alias_it = ARCH_ALIASES.find(name);
++    if (alias_it != ARCH_ALIASES.end()) {
++        return alias_it->second;
++    }
++
+     return LLM_ARCH_UNKNOWN;
+ }
+ 
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index 989da06d8..451f229f8 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -380,6 +380,7 @@ enum llm_tensor {
+     LLM_TENSOR_ATTN_V,
+     LLM_TENSOR_ATTN_QKV,
+     LLM_TENSOR_ATTN_OUT,
++    LLM_TENSOR_ATTN_OUT_PROJ, // "blk.%d.attn_out" used by Ollama gptoss
+     LLM_TENSOR_ATTN_NORM,
+     LLM_TENSOR_ATTN_NORM_2,
+     LLM_TENSOR_ATTN_OUT_NORM,
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 474cabdfc..05e65e96e 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -455,7 +455,11 @@ namespace GGUFMeta {
+                 GGUFMeta::GKV<GGUFMeta::ArrayInfo>::get_kv(metadata, kid);
+ 
+             if (n != arr_info.length) {
+-                throw std::runtime_error(format("key %s has wrong array length; expected %u, got %u", key.c_str(), n, (uint32_t) arr_info.length));
++                if (required || arr_info.length > n) {
++                    throw std::runtime_error(format("key %s has wrong array length; expected %u, got %u", key.c_str(), n, (uint32_t) arr_info.length));
++                }
++                // Not required and GGUF has fewer elements: accept partial, rest stay zero-initialized
++                n = arr_info.length;
+             }
+ 
+             return get_arr(key, result, required);
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index d041a9ce3..9a649cc7e 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1467,7 +1467,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             }
+         }
+     }
+-    ml.done_getting_tensors();
++    ml.done_getting_tensors(true);
+ 
+     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
+     // If sidecar scales exist, the output weight must be an actual output tensor.
+diff --git a/src/models/openai-moe.cpp b/src/models/openai-moe.cpp
+index 6d74f9c7e..d6bc7d738 100644
+--- a/src/models/openai-moe.cpp
++++ b/src/models/openai-moe.cpp
+@@ -2,7 +2,16 @@
+ 
+ void llama_model_openai_moe::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+-    ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,  hparams.n_ff_exp);
++    // Ollama blobs use feed_forward_length only; use it as fallback for expert_feed_forward_length.
++    if (!ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH, hparams.n_ff_exp, false)) {
++        hparams.n_ff_exp = hparams.n_ff();
++    }
++    // Ollama gptoss GGUFs omit rope.scaling.type; llama.cpp then defaults to "linear" which
++    // crushes short-range positional resolution. The model uses a high RoPE base (150000)
++    // for context extension (NTK method) so no additional frequency scaling is needed.
++    if (hparams.rope_freq_scale_train != 1.0f) {
++        hparams.rope_freq_scale_train = 1.0f;
++    }
+     ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,    hparams.n_swa);
+ 
+     hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
+@@ -36,24 +45,29 @@ void llama_model_openai_moe::load_arch_tensors(llama_model_loader &) {
+         auto & layer = layers[i];
+ 
+         layer.attn_norm      = create_tensor(tn(LLM_TENSOR_ATTN_NORM,      "weight", i), {n_embd}, 0);
+-        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
++        // Ollama gptoss uses "ffn_norm" where upstream uses "post_attention_norm"
++        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, TENSOR_NOT_REQUIRED);
++        if (!layer.attn_post_norm) {
++            layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, TENSOR_NOT_REQUIRED);
++        }
+ 
+         create_tensor_qkv(layer, i, n_embd, n_head * n_rot, n_head_kv * n_rot, n_head_kv * n_rot, 0);
+-        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_head * n_rot, n_embd}, 0);
+-
+-        layer.attn_sinks = create_tensor(tn(LLM_TENSOR_ATTN_SINKS, "weight", i), {n_head}, 0);
++        // Ollama gptoss blobs use "attn_out" not "attn_output"
++        layer.wo   = create_tensor(tn(LLM_TENSOR_ATTN_OUT_PROJ, "weight", i), {n_head * n_rot, n_embd}, 0);
++        layer.wo_b = create_tensor(tn(LLM_TENSOR_ATTN_OUT_PROJ, "bias",   i), {n_embd},                 TENSOR_NOT_REQUIRED);
++        // Ollama gptoss: attn_sinks has no .weight suffix
++        layer.attn_sinks = create_tensor(tn(LLM_TENSOR_ATTN_SINKS, i), {n_head}, TENSOR_NOT_REQUIRED);
+ 
+         layer.ffn_gate_inp  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", i), {  n_embd, n_expert}, 0);
+         layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert}, 0);
+         layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert}, 0);
+         layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert}, 0);
+ 
+-        layer.wo_b = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd}, 0);
+ 
+-        layer.ffn_gate_inp_b  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "bias", i), {n_expert}, 0);
+-        layer.ffn_gate_exps_b = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "bias", i), {n_ff_exp, n_expert}, 0);
+-        layer.ffn_down_exps_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "bias", i), {  n_embd, n_expert}, 0);
+-        layer.ffn_up_exps_b   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "bias", i), {n_ff_exp, n_expert}, 0);
++        layer.ffn_gate_inp_b  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "bias", i), {n_expert}, TENSOR_NOT_REQUIRED);
++        layer.ffn_gate_exps_b = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "bias", i), {n_ff_exp, n_expert}, TENSOR_NOT_REQUIRED);
++        layer.ffn_down_exps_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "bias", i), {  n_embd, n_expert}, TENSOR_NOT_REQUIRED);
++        layer.ffn_up_exps_b   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "bias", i), {n_ff_exp, n_expert}, TENSOR_NOT_REQUIRED);
+     }
+ }
+ 
+diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
+index d8ffe43ae..a2ef89636 100644
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -3,7 +3,7 @@
+ 
+ void llama_model_qwen35::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
+-    ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, true);
++    ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, false);
+ 
+     // Load linear attention (gated delta net) parameters
+     ml.get_key(LLM_KV_SSM_CONV_KERNEL,    hparams.ssm_d_conv);
+@@ -68,7 +68,7 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
+ 
+         if (!hparams.is_recr(il)) {
+             // Attention layers
+-            create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, n_embd_k_gqa, n_embd_v_gqa, flags);
++            create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, hparams.n_embd_k_gqa(il), hparams.n_embd_v_gqa(il), flags);
+             layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", il), { n_embd_head_k * n_head, n_embd }, flags);
+ 
+             // Q/K normalization for attention layers
+@@ -80,7 +80,7 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
+             layer.wqkv           = create_tensor(tn(LLM_TENSOR_ATTN_QKV,       "weight", il), { n_embd, key_dim * 2 + value_dim }, TENSOR_NOT_REQUIRED);
+             layer.wqkv_gate      = create_tensor(tn(LLM_TENSOR_ATTN_GATE,      "weight", il), { n_embd, value_dim }, TENSOR_NOT_REQUIRED);
+             layer.ssm_conv1d     = create_tensor(tn(LLM_TENSOR_SSM_CONV1D,     "weight", il), { hparams.ssm_d_conv, conv_dim }, flags);
+-            layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   il), { hparams.ssm_dt_rank }, flags);
++            layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   il), { hparams.ssm_dt_rank }, flags | TENSOR_NOT_REQUIRED);
+             layer.ssm_a          = create_tensor(tn(LLM_TENSOR_SSM_A_NOSCAN,             il), { hparams.ssm_dt_rank }, flags);
+             layer.ssm_beta       = create_tensor(tn(LLM_TENSOR_SSM_BETA,       "weight", il), { n_embd, n_v_heads }, flags);
+             layer.ssm_alpha      = create_tensor(tn(LLM_TENSOR_SSM_ALPHA,      "weight", il), { n_embd, n_v_heads }, flags);
+@@ -100,7 +100,7 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
+         layer.attn_norm      = create_tensor(tn(LLM_TENSOR_ATTN_NORM,      "weight", il), { n_embd }, 0);
+         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", il), { n_embd }, 0);
+ 
+-        create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, n_embd_k_gqa, n_embd_v_gqa, 0);
++        create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, hparams.n_embd_k_gqa(il), hparams.n_embd_v_gqa(il), 0);
+         layer.wo          = create_tensor(tn(LLM_TENSOR_ATTN_OUT,    "weight", il), { n_embd_head_k * n_head, n_embd }, 0);
+         layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", il), { n_embd_head_k }, 0);
+         layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", il), { n_embd_head_k }, 0);
+@@ -285,7 +285,7 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn(
+     cb(Vcur, "Vcur", il);
+ 
+     // Apply K normalization
+-    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+     Kcur = build_norm(Kcur, model.layers[il].attn_k_norm, nullptr, LLM_NORM_RMS, il);
+     cb(Kcur, "Kcur_normed", il);
+ 
+@@ -296,7 +296,7 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn(
+     gate = ggml_cont_2d(ctx0, gate, n_embd_head * n_head, n_tokens);
+     cb(gate, "gate_reshaped", il);
+ 
+-    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+ 
+     // Apply MRoPE
+     Qcur = ggml_rope_multi(
+@@ -369,7 +369,9 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
+     alpha = ggml_reshape_3d(ctx0, alpha, num_v_heads, n_seq_tokens, n_seqs);
+     cb(alpha, "alpha", il);
+ 
+-    ggml_tensor * alpha_biased   = ggml_add(ctx0, alpha, model.layers[il].ssm_dt);
++    ggml_tensor * alpha_biased   = model.layers[il].ssm_dt
++        ? ggml_add(ctx0, alpha, model.layers[il].ssm_dt)
++        : alpha;
+     ggml_tensor * alpha_softplus = ggml_softplus(ctx0, alpha_biased);
+     cb(alpha_softplus, "a_softplus", il);
+ 
+@@ -576,12 +578,12 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+     cb(gate, "mtp_gate", il);
+ 
+     ggml_tensor * Kcur = build_lora_mm(layer.wk, cur, layer.wk_s);
+-    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+     Kcur = build_norm(Kcur, layer.attn_k_norm, nullptr, LLM_NORM_RMS, il);
+     cb(Kcur, "mtp_Kcur_normed", il);
+ 
+     ggml_tensor * Vcur = build_lora_mm(layer.wv, cur, layer.wv_s);
+-    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+     cb(Vcur, "mtp_Vcur", il);
+ 
+     Qcur = ggml_rope_multi(ctx0, Qcur, inp_pos, nullptr,
+diff --git a/src/models/qwen35moe.cpp b/src/models/qwen35moe.cpp
+index 7b0876cbb..2949854e4 100644
+--- a/src/models/qwen35moe.cpp
++++ b/src/models/qwen35moe.cpp
+@@ -6,7 +6,7 @@ void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_EXPERT_SHARED_FEED_FORWARD_LENGTH, hparams.n_ff_shexp, false);
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
+ 
+-    ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, true);
++    ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, false);
+ 
+     // Load linear attention (gated delta net) parameters
+     ml.get_key(LLM_KV_SSM_CONV_KERNEL,    hparams.ssm_d_conv);
+@@ -74,7 +74,7 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
+ 
+         if (!hparams.is_recr(il)) {
+             // Attention layers
+-            create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, n_embd_k_gqa, n_embd_v_gqa, flags);
++            create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, hparams.n_embd_k_gqa(il), hparams.n_embd_v_gqa(il), flags);
+             layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", il), { n_embd_head_k * n_head, n_embd }, flags);
+ 
+             // Q/K normalization for attention layers
+@@ -86,7 +86,7 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
+             layer.wqkv           = create_tensor(tn(LLM_TENSOR_ATTN_QKV,       "weight", il), { n_embd, key_dim * 2 + value_dim }, TENSOR_NOT_REQUIRED);
+             layer.wqkv_gate      = create_tensor(tn(LLM_TENSOR_ATTN_GATE,      "weight", il), { n_embd, value_dim }, TENSOR_NOT_REQUIRED);
+             layer.ssm_conv1d     = create_tensor(tn(LLM_TENSOR_SSM_CONV1D,     "weight", il), { hparams.ssm_d_conv, conv_dim }, flags);
+-            layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   il), { hparams.ssm_dt_rank }, flags);
++            layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   il), { hparams.ssm_dt_rank }, flags | TENSOR_NOT_REQUIRED);
+             layer.ssm_a          = create_tensor(tn(LLM_TENSOR_SSM_A_NOSCAN,             il), { hparams.ssm_dt_rank }, flags);
+             layer.ssm_beta       = create_tensor(tn(LLM_TENSOR_SSM_BETA,       "weight", il), { n_embd, n_v_heads }, flags);
+             layer.ssm_alpha      = create_tensor(tn(LLM_TENSOR_SSM_ALPHA,      "weight", il), { n_embd, n_v_heads }, flags);
+@@ -116,7 +116,7 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
+         layer.attn_norm      = create_tensor(tn(LLM_TENSOR_ATTN_NORM,      "weight", il), { n_embd }, 0);
+         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", il), { n_embd }, 0);
+ 
+-        create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, n_embd_k_gqa, n_embd_v_gqa, 0);
++        create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, hparams.n_embd_k_gqa(il), hparams.n_embd_v_gqa(il), 0);
+         layer.wo          = create_tensor(tn(LLM_TENSOR_ATTN_OUT,    "weight", il), { n_embd_head_k * n_head, n_embd }, 0);
+         layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", il), { n_embd_head_k }, 0);
+         layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", il), { n_embd_head_k }, 0);
+@@ -309,7 +309,7 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_attn(
+     cb(Vcur, "Vcur", il);
+ 
+     // Apply K normalization
+-    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+     Kcur = build_norm(Kcur, model.layers[il].attn_k_norm, nullptr, LLM_NORM_RMS, il);
+     cb(Kcur, "Kcur_normed", il);
+ 
+@@ -320,7 +320,7 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_attn(
+     gate = ggml_cont_2d(ctx0, gate, n_embd_head * n_head, n_tokens);
+     cb(gate, "gate_reshaped", il);
+ 
+-    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+ 
+     // Apply IMRoPE
+     Qcur = ggml_rope_multi(
+@@ -393,7 +393,9 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_attn_linear(
+     alpha = ggml_reshape_3d(ctx0, alpha, num_v_heads, n_seq_tokens, n_seqs);
+     cb(alpha, "alpha", il);
+ 
+-    ggml_tensor * alpha_biased   = ggml_add(ctx0, alpha, model.layers[il].ssm_dt);
++    ggml_tensor * alpha_biased   = model.layers[il].ssm_dt
++        ? ggml_add(ctx0, alpha, model.layers[il].ssm_dt)
++        : alpha;
+     ggml_tensor * alpha_softplus = ggml_softplus(ctx0, alpha_biased);
+     cb(alpha_softplus, "a_softplus", il);
+ 
+@@ -640,12 +642,12 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
+     cb(gate, "mtp_gate", il);
+ 
+     ggml_tensor * Kcur = build_lora_mm(layer.wk, cur, layer.wk_s);
+-    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++    Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+     Kcur = build_norm(Kcur, layer.attn_k_norm, nullptr, LLM_NORM_RMS, il);
+     cb(Kcur, "mtp_Kcur_normed", il);
+ 
+     ggml_tensor * Vcur = build_lora_mm(layer.wv, cur, layer.wv_s);
+-    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++    Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, model.hparams.n_head_kv(il), n_tokens);
+     cb(Vcur, "mtp_Vcur", il);
+ 
+     Qcur = ggml_rope_multi(ctx0, Qcur, inp_pos, nullptr,

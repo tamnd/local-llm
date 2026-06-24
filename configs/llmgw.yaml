@@ -70,13 +70,23 @@ models:
     params:
       keep_alive: "60m"
 
-  # The high-throughput zero-proxy path (spec 2065 docs 15 and 16). The inproc
-  # backend loads the GGUF directly into the gateway process, so there is no
-  # Ollama subprocess and no HTTP hop, and the gateway controls the sampler, the
-  # KV cache types, and speculative decoding. It needs a cgo build of the binary
-  # (make build-llama) with libllama on the loader path; on the default build it
-  # reports the engine as unavailable. Uncomment to serve a dense coder with a
-  # vocab-matched draft model, the case where speculative decoding pays off most.
+  # ---- inproc (llama.cpp zero-proxy) entries --------------------------------
+  #
+  # The inproc backend loads the GGUF directly into the gateway process via CGO.
+  # No Ollama subprocess, no HTTP hop. Needs `make build-llama` with libllama.so
+  # on LD_LIBRARY_PATH. Measured on RTX 4090 b9780 (spec 2065 doc 18):
+  #
+  #   dense 32B models:  ~41 tok/s inproc vs ~26 tok/s Ollama (+59%)
+  #   qwen3.6:27b (SSM): ~18.3 tok/s inproc vs ~47.5 tok/s Ollama (39%)
+  #   qwen3.6:35b (MoE): ~18.9 tok/s inproc vs ~175 tok/s Ollama (11%)
+  #   gpt-oss:20b (MoE): ~23.5 tok/s inproc vs ~170 tok/s Ollama (14%)
+  #
+  # New-arch models are slow through inproc because b9780 SSM/MoE CUDA kernel
+  # paths are newly added and not yet optimized. Use the vllm entries below for
+  # qwen3.6:35b and gpt-oss:20b where MoE dispatch matters.
+
+  # Dense coder, best inproc model. Speculative decoding with a 1.7B draft can
+  # push to ~60+ tok/s in greedy mode. Uncomment and set model_path.
   #
   # qwen3-coder-inproc:
   #   backend: inproc
@@ -84,14 +94,97 @@ models:
   #   vram_mb: 21000
   #   params:
   #     model_path: "/models/gguf/Qwen3-Coder-30B-UD-Q4_K_XL.gguf"
-  #     draft_path: "/models/gguf/Qwen3-1.7B-Q4_K_M.gguf"   # must share the target vocab
+  #     draft_path: "/models/gguf/Qwen3-1.7B-Q4_K_M.gguf"
   #     n_ctx: 32768
   #     n_gpu_layers: 99
   #     flash_attn: true
   #     cache_type_k: "q8_0"
   #     cache_type_v: "q8_0"
   #     draft_max: 6
-  #     temperature: 0.0   # speculative decoding engages only in greedy mode
+  #     temperature: 0.0
+
+  # qwen3.6:27b inproc - hybrid SSM/attention, 18.3 tok/s. Ollama wins here
+  # until llama.cpp SSM kernels mature. Uncomment for benchmarking.
+  #
+  # qwen3-27b-inproc:
+  #   backend: inproc
+  #   upstream_model: qwen3.6:27b
+  #   vram_mb: 16040
+  #   params:
+  #     model_path: "/mnt/c/Users/gopher/.ollama/models/blobs/sha256-83c54730a5fea..."
+  #     n_ctx: 4096
+  #     n_gpu_layers: 99
+  #     flash_attn: true
+  #     cache_type_k: "q8_0"
+  #     cache_type_v: "q8_0"
+
+  # qwen3.6:35b inproc - hybrid SSM+MoE, 18.9 tok/s. vLLM backend preferred.
+  #
+  # qwen3-35b-inproc:
+  #   backend: inproc
+  #   upstream_model: qwen3.6:35b
+  #   vram_mb: 22236
+  #   params:
+  #     model_path: "/mnt/c/Users/gopher/.ollama/models/blobs/sha256-f5ee307a29821..."
+  #     n_ctx: 4096
+  #     n_gpu_layers: 99
+  #     flash_attn: true
+  #     cache_type_k: "q8_0"
+  #     cache_type_v: "q8_0"
+
+  # gpt-oss:20b inproc - MoE MXFP4, 23.5 tok/s. vLLM backend preferred.
+  #
+  # gpt-oss-20b-inproc:
+  #   backend: inproc
+  #   upstream_model: gpt-oss:20b
+  #   vram_mb: 12992
+  #   params:
+  #     model_path: "/mnt/c/Users/gopher/.ollama/models/blobs/sha256-e7b273f9636059..."
+  #     n_ctx: 4096
+  #     n_gpu_layers: 99
+  #     flash_attn: true
+  #     cache_type_k: "q8_0"
+  #     cache_type_v: "q8_0"
+
+  # ---- vLLM entries ---------------------------------------------------------
+  #
+  # vLLM (Option B) uses FlashInfer's fused MoE CUDA kernels and chunked prefill.
+  # On Ada (sm_89), its MoE dispatch is far better than llama.cpp b9780 for
+  # qwen3.6:35b and gpt-oss:20b. Requires scripts/08-vllm.sh to install and
+  # start the systemd units before the gateway loads these entries.
+  #
+  # Port assignments (must match 08-vllm.sh):
+  #   8100 - qwen3-35b-vllm
+  #   8101 - gpt-oss-20b-vllm
+  #
+  # vLLM does not yet support the hybrid SSM architecture (qwen3.6:27b), so
+  # that model stays on Ollama or inproc.
+
+  # qwen3.6:35b via vLLM. Expected: >175 tok/s (>1x Ollama) with FlashInfer.
+  # Run: systemctl start vllm-qwen3-35b
+  #
+  # qwen3-35b-vllm:
+  #   backend: vllm
+  #   base_url: "http://127.0.0.1:8100"
+  #   upstream_model: "Qwen/Qwen3-30B-A3B-Instruct"
+  #   vram_mb: 22000
+  #   params:
+  #     gpu_memory_utilization: "0.85"
+  #     max_model_len: 32768
+  #     enforce_eager: false
+
+  # gpt-oss:20b via vLLM. Expected: >170 tok/s (>1x Ollama) with FlashInfer MoE.
+  # Run: systemctl start vllm-gpt-oss-20b
+  #
+  # gpt-oss-20b-vllm:
+  #   backend: vllm
+  #   base_url: "http://127.0.0.1:8101"
+  #   upstream_model: "openai-community/gpt-oss-20b"
+  #   vram_mb: 14000
+  #   params:
+  #     gpu_memory_utilization: "0.70"
+  #     max_model_len: 32768
+  #     enforce_eager: false
 
 manager:
   hot_swap: true          # unload the outgoing model before loading the next

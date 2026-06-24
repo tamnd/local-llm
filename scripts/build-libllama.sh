@@ -26,6 +26,9 @@ BUILD="$SRC/build"
 # CUDA 13.2 gibberish regression that makes the toolchain version matter.
 LLAMA_CPP_REF="${LLAMA_CPP_REF:-b9780}"
 CUDA_ARCH="${CUDA_ARCH:-89}" # Ada / RTX 4090 is sm_89
+# Pin the CUDA toolkit to 12.x when the system has multiple versions installed.
+# CUDA 13.x requires a driver >= 590; current GamingPC driver is 566.36 (max 12.7).
+CUDA_TOOLKIT_ROOT="${CUDA_TOOLKIT_ROOT:-/usr/local/cuda-12}"
 
 mkdir -p "$THIRD_PARTY"
 
@@ -37,11 +40,13 @@ fi
 git -C "$SRC" fetch --tags --quiet
 git -C "$SRC" checkout --quiet "$LLAMA_CPP_REF"
 
-echo "configuring (CUDA arch $CUDA_ARCH)"
+echo "configuring (CUDA arch $CUDA_ARCH, toolkit $CUDA_TOOLKIT_ROOT)"
 cmake -S "$SRC" -B "$BUILD" \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DGGML_CUDA=ON \
 	-DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
+	-DCMAKE_CUDA_COMPILER="$CUDA_TOOLKIT_ROOT/bin/nvcc" \
+	-DCUDA_TOOLKIT_ROOT_DIR="$CUDA_TOOLKIT_ROOT" \
 	-DBUILD_SHARED_LIBS=ON \
 	-DLLAMA_BUILD_TESTS=OFF \
 	-DLLAMA_BUILD_EXAMPLES=OFF \

@@ -22,9 +22,12 @@ THIRD_PARTY="$ROOT/third_party"
 SRC="$THIRD_PARTY/llama.cpp"
 BUILD="$SRC/build"
 
-# Pin to a release tag. Bump deliberately and re-measure; see doc 17 on the
+# Pin to a commit or tag. Bump deliberately and re-measure; see doc 17 on the
 # CUDA 13.2 gibberish regression that makes the toolchain version matter.
-LLAMA_CPP_REF="${LLAMA_CPP_REF:-b9780}"
+# 51eae8cf is the main HEAD as of 2026-06-24, 3 vulkan-only commits past b9780.
+# The SSM/MoE/MXFP4 CUDA paths landed in b9780 itself; main is functionally
+# identical for our Ada (sm_89) CUDA model code.
+LLAMA_CPP_REF="${LLAMA_CPP_REF:-51eae8cfcac4fb403bcf91d1fb524fec0974f510}"
 CUDA_ARCH="${CUDA_ARCH:-89}" # Ada / RTX 4090 is sm_89
 # Pin the CUDA toolkit to 12.x when the system has multiple versions installed.
 # CUDA 13.x requires a driver >= 590; current GamingPC driver is 566.36 (max 12.7).

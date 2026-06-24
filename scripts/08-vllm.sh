@@ -44,37 +44,30 @@ if [ ! -f "${PY}" ]; then
     python3.11 -m venv "${VENV}"
 fi
 
-# Upgrade pip before anything else; older pip misreads the CUDA extra index.
-"${PIP}" install --quiet --upgrade pip
+# Upgrade pip before anything else.
+"${PIP}" install --quiet --upgrade pip setuptools
 
-# PyTorch 2.7 + CUDA 12.6. The CUDA extra index supplies the cu126 wheel so
-# we avoid the generic cpu wheel from PyPI.
-if ! "${PY}" -c "import torch; assert '2.7' in torch.__version__" 2>/dev/null; then
-    echo "installing pytorch 2.7 cu126"
-    "${PIP}" install \
-        torch==2.7.0+cu126 \
-        --index-url https://download.pytorch.org/whl/cu126 \
-        --quiet
+# vLLM 0.23.0 requires torch==2.11.0 exactly. As of torch 2.9+, the PyPI
+# manylinux_2_28 wheel includes CUDA dispatch (no separate CUDA extra index
+# needed); the wheel links against the system CUDA at runtime. Install torch
+# first so vLLM's constraint resolves cleanly.
+if ! "${PY}" -c "import torch; assert '2.11' in torch.__version__" 2>/dev/null; then
+    echo "installing pytorch 2.11.0"
+    "${PIP}" install torch==2.11.0 --quiet
 fi
 
-# vLLM 0.9.1 with FlashInfer 0.2.x for fused MoE, chunked prefill, and FP8
-# KV cache on Ada (sm_89). flashinfer prebuilt wheel for cu126 + torch 2.7.
-if ! "${PY}" -c "import vllm" 2>/dev/null; then
-    echo "installing vllm 0.9.1"
-    "${PIP}" install vllm==0.9.1 --quiet
-
-    # FlashInfer provides optimized MoE routing and attention backends. Without
-    # it vLLM falls back to triton kernels which are slower on Ada.
-    echo "installing flashinfer 0.2.x"
-    "${PIP}" install flashinfer-python \
-        --index-url https://flashinfer.ai/whl/cu126/torch2.7 \
-        --quiet
+# vLLM 0.23.0: released 2026-06-15, adds gpt-oss-20b support, Qwen3.6 MoE,
+# and FlashInfer 0.6.x fused MoE kernels on Ada (sm_89).
+# FlashInfer 0.6.12 is a hard dep pinned in vllm's wheel; pip resolves it.
+if ! "${PY}" -c "import vllm; v=vllm.__version__; assert v.startswith('0.23')" 2>/dev/null; then
+    echo "installing vllm 0.23.0"
+    "${PIP}" install vllm==0.23.0 --quiet
 fi
 
 # huggingface_hub CLI for model downloads. hf_transfer speeds up large pulls.
 "${PIP}" install --quiet huggingface_hub hf_transfer
 
-echo "vLLM $(${PY} -c 'import vllm; print(vllm.__version__)') installed at ${VENV}"
+echo "vLLM $(${PY} -c 'import vllm; print(vllm.__version__)') torch $(${PY} -c 'import torch; print(torch.__version__)') installed at ${VENV}"
 
 # Create the model directory if it does not exist. Models are large; this is
 # typically a symlink to a drive with enough space.
@@ -86,11 +79,15 @@ mkdir -p "${VLLM_MODEL_DIR}"
 # network-online.target so Tailscale is up before the gateway starts.
 #
 # Port assignments (matching configs/llmgw.yaml):
-#   8100 - qwen3.6:35b (Qwen3-30B-A3B-Instruct) - MoE path
-#   8101 - gpt-oss:20b (openai-community/gpt-oss-20b) - MoE path
+#   8100 - qwen3.6:35b  -> Qwen/Qwen3.6-35B-A3B-FP8 (FP8 quant, fits in 24 GB)
+#   8101 - gpt-oss:20b  -> openai/gpt-oss-20b (native MXFP4 MoE)
+#
+# Qwen3.6-35B-A3B uses gated-delta-network SSM layers; set --max-num-seqs=512
+# to keep the recurrent state cache from exceeding VRAM (default 1024 is too
+# large for a 24 GB card with FP8 weights already resident).
 
 write_unit() {
-    local name="$1" model="$2" port="$3" mem="$4"
+    local name="$1" model="$2" port="$3" mem="$4" extra_flags="${5:-}"
     cat > "/etc/systemd/system/vllm-${name}.service" <<UNIT
 [Unit]
 Description=vLLM ${name} on port ${port}
@@ -102,15 +99,15 @@ Type=simple
 Environment=HF_HOME=${VLLM_MODEL_DIR}/.cache/huggingface
 Environment=HF_HUB_ENABLE_HF_TRANSFER=1
 Environment=CUDA_VISIBLE_DEVICES=0
-ExecStart=${PY} -m vllm.entrypoints.openai.api_server \\
-    --model ${model} \\
-    --host 127.0.0.1 \\
-    --port ${port} \\
-    --gpu-memory-utilization ${mem} \\
-    --tensor-parallel-size 1 \\
-    --max-model-len 32768 \\
-    --enable-chunked-prefill \\
-    --enforce-eager
+ExecStart=${PY} -m vllm.entrypoints.openai.api_server \
+    --model ${model} \
+    --host 127.0.0.1 \
+    --port ${port} \
+    --gpu-memory-utilization ${mem} \
+    --tensor-parallel-size 1 \
+    --max-model-len 32768 \
+    --enable-chunked-prefill \
+    ${extra_flags}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -123,8 +120,8 @@ UNIT
     echo "wrote /etc/systemd/system/vllm-${name}.service"
 }
 
-write_unit "qwen3-35b"  "Qwen/Qwen3-30B-A3B-Instruct"            8100 "0.85"
-write_unit "gpt-oss-20b" "openai-community/gpt-oss-20b"           8101 "0.70"
+write_unit "qwen3-35b"   "Qwen/Qwen3.6-35B-A3B-FP8"  8100 "0.85" "--max-num-seqs 512"
+write_unit "gpt-oss-20b" "openai/gpt-oss-20b"          8101 "0.70" "--kv-cache-dtype fp8"
 
 systemctl daemon-reload
 echo ""

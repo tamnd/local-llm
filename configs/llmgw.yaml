@@ -160,26 +160,29 @@ models:
   # vLLM does not yet support the hybrid SSM architecture (qwen3.6:27b), so
   # that model stays on Ollama or inproc.
 
-  # qwen3.6:35b via vLLM. Expected: >175 tok/s (>1x Ollama) with FlashInfer.
+  # qwen3.6:35b via vLLM using the FP8 quantized variant. The FP8 weights use
+  # ~18 GB; vLLM's chunked prefill + FlashInfer MoE kernels target >175 tok/s.
+  # Actual HF model: Qwen/Qwen3.6-35B-A3B-FP8 (official Qwen FP8 quant).
   # Run: systemctl start vllm-qwen3-35b
   #
   # qwen3-35b-vllm:
   #   backend: vllm
   #   base_url: "http://127.0.0.1:8100"
-  #   upstream_model: "Qwen/Qwen3-30B-A3B-Instruct"
-  #   vram_mb: 22000
+  #   upstream_model: "Qwen/Qwen3.6-35B-A3B-FP8"
+  #   vram_mb: 21000
   #   params:
   #     gpu_memory_utilization: "0.85"
   #     max_model_len: 32768
   #     enforce_eager: false
 
-  # gpt-oss:20b via vLLM. Expected: >170 tok/s (>1x Ollama) with FlashInfer MoE.
+  # gpt-oss:20b via vLLM. Uses native MXFP4 MoE quant + FP8 KV cache.
+  # Actual HF model: openai/gpt-oss-20b (OpenAI OSS release).
   # Run: systemctl start vllm-gpt-oss-20b
   #
   # gpt-oss-20b-vllm:
   #   backend: vllm
   #   base_url: "http://127.0.0.1:8101"
-  #   upstream_model: "openai-community/gpt-oss-20b"
+  #   upstream_model: "openai/gpt-oss-20b"
   #   vram_mb: 14000
   #   params:
   #     gpu_memory_utilization: "0.70"

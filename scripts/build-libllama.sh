@@ -40,6 +40,19 @@ fi
 git -C "$SRC" fetch --tags --quiet
 git -C "$SRC" checkout --quiet "$LLAMA_CPP_REF"
 
+# Apply compatibility patches for Ollama-format GGUFs (arch name aliases,
+# tensor name differences, partial array fills). The patch was generated from
+# the GamingPC WSL2 working tree and lives at patches/llama-b9780-ollama-compat.patch.
+PATCH="$ROOT/patches/llama-b9780-ollama-compat.patch"
+if [ -f "$PATCH" ]; then
+	if git -C "$SRC" apply --check "$PATCH" 2>/dev/null; then
+		git -C "$SRC" apply "$PATCH"
+		echo "applied $PATCH"
+	else
+		echo "patch already applied or does not apply cleanly; skipping"
+	fi
+fi
+
 echo "configuring (CUDA arch $CUDA_ARCH, toolkit $CUDA_TOOLKIT_ROOT)"
 cmake -S "$SRC" -B "$BUILD" \
 	-DCMAKE_BUILD_TYPE=Release \

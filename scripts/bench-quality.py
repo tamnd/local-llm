@@ -51,30 +51,35 @@ def parse_args():
 # Ollama client
 # ---------------------------------------------------------------------------
 
-def ollama_gen(base_url, model, prompt, system=None, max_tokens=512, temperature=0.0):
+def ollama_gen(base_url, model, prompt, system=None, max_tokens=512, temperature=0.0,
+               think=False):
+    # Use the chat API so we can pass think:false, which the generate API ignores
+    # for Qwen3.x models (they output <think> preamble that silently eats tokens).
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
     payload = {
         "model": model,
-        "prompt": prompt,
+        "messages": messages,
         "stream": False,
+        "think": think,
         "options": {
             "num_predict": max_tokens,
             "temperature": temperature,
             "seed": 42,
         },
     }
-    if system:
-        payload["system"] = system
     req = urllib.request.Request(
-        f"{base_url}/api/generate",
+        f"{base_url}/api/chat",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=180) as resp:
         d = json.loads(resp.read())
-    text = d.get("response", "")
-    # Strip thinking block if present
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    msg = d.get("message", {})
+    text = msg.get("content", "")
     toks = d.get("eval_count", 0)
     ns = d.get("eval_duration", 1)
     return text, toks, ns
@@ -86,7 +91,7 @@ def measure_tps(base_url, model, n_tokens=256):
         "database engine. Cover log records, checkpoints, redo/undo phases, "
         "group commit, and fsync ordering."
     )
-    _, toks, ns = ollama_gen(base_url, model, prompt, max_tokens=n_tokens)
+    _, toks, ns = ollama_gen(base_url, model, prompt, max_tokens=n_tokens, think=False)
     return round(toks / (ns / 1e9), 1) if ns > 0 and toks > 0 else 0.0
 
 
@@ -201,8 +206,7 @@ def run_mmlu(base_url, model, items, think=False):
     sys_prompt = (
         "Answer each multiple-choice question with just one letter: A, B, C, or D."
     )
-    if not think:
-        sys_prompt = "/no_think\n" + sys_prompt
+    _ = think  # thinking controlled via ollama_gen think= param, not system prompt
 
     correct = 0
     errors = 0
@@ -212,7 +216,7 @@ def run_mmlu(base_url, model, items, think=False):
         prompt = fmt_mmlu(item["question"], item["choices"], item["dev"], think)
         try:
             resp, _, _ = ollama_gen(base_url, model, prompt, system=sys_prompt,
-                                     max_tokens=8, temperature=0.0)
+                                     max_tokens=16, temperature=0.0, think=think)
             pred = extract_choice(resp)
             gold = CHOICE_LABELS[item["answer"]]
             if pred == gold:
@@ -249,8 +253,7 @@ def run_gsm8k(base_url, model, items, think=False):
         "Solve the math problem step by step. "
         "Put your final answer after '####' like this: #### 42"
     )
-    if not think:
-        sys_prompt = "/no_think\n" + sys_prompt
+    _ = think  # thinking controlled via ollama_gen think= param, not system prompt
 
     correct = 0
     errors = 0
@@ -263,7 +266,7 @@ def run_gsm8k(base_url, model, items, think=False):
 
         try:
             resp, _, _ = ollama_gen(base_url, model, question, system=sys_prompt,
-                                     max_tokens=512, temperature=0.0)
+                                     max_tokens=512, temperature=0.0, think=think)
             pred = extract_gsm8k_answer(resp)
             if pred and gold and pred == gold:
                 correct += 1
@@ -299,8 +302,7 @@ def run_humaneval(base_url, model, items, think=False):
         "Complete the Python function. Return only the implementation, "
         "no explanation, no markdown fences."
     )
-    if not think:
-        sys_prompt = "/no_think\n" + sys_prompt
+    _ = think  # thinking controlled via ollama_gen think= param, not system prompt
 
     passed = 0
     errors = 0
@@ -315,7 +317,7 @@ def run_humaneval(base_url, model, items, think=False):
 
         try:
             resp, _, _ = ollama_gen(base_url, model, prompt, system=sys_prompt,
-                                     max_tokens=512, temperature=0.0)
+                                     max_tokens=512, temperature=0.0, think=think)
             impl = extract_code(resp, prompt)
 
             # Build executable: prompt (has imports + signature) + impl + tests

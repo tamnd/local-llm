@@ -101,7 +101,7 @@ MMLU_SUBJECTS = [
     "high_school_computer_science",
     "machine_learning",
     "formal_logic",
-    "world_history",
+    "high_school_world_history",
     "philosophy",
     "high_school_physics",
     "professional_law",

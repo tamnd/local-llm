@@ -215,8 +215,11 @@ def run_mmlu(base_url, model, items, think=False):
     for i, item in enumerate(items):
         prompt = fmt_mmlu(item["question"], item["choices"], item["dev"], think)
         try:
+            # With thinking on, the <think> block can be hundreds of tokens
+            # before the answer letter appears. Use a generous budget.
+            mtok = 1024 if think else 16
             resp, _, _ = ollama_gen(base_url, model, prompt, system=sys_prompt,
-                                     max_tokens=16, temperature=0.0, think=think)
+                                     max_tokens=mtok, temperature=0.0, think=think)
             pred = extract_choice(resp)
             gold = CHOICE_LABELS[item["answer"]]
             if pred == gold:
@@ -265,8 +268,9 @@ def run_gsm8k(base_url, model, items, think=False):
         gold = extract_gsm8k_answer(gold_raw)
 
         try:
+            mtok = 2048 if think else 512
             resp, _, _ = ollama_gen(base_url, model, question, system=sys_prompt,
-                                     max_tokens=512, temperature=0.0, think=think)
+                                     max_tokens=mtok, temperature=0.0, think=think)
             pred = extract_gsm8k_answer(resp)
             if pred and gold and pred == gold:
                 correct += 1
@@ -316,8 +320,9 @@ def run_humaneval(base_url, model, items, think=False):
         canonical = item.get("canonical_solution", "")
 
         try:
+            mtok = 2048 if think else 512
             resp, _, _ = ollama_gen(base_url, model, prompt, system=sys_prompt,
-                                     max_tokens=512, temperature=0.0, think=think)
+                                     max_tokens=mtok, temperature=0.0, think=think)
             impl = extract_code(resp, prompt)
 
             # Build executable: prompt (has imports + signature) + impl + tests

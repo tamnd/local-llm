@@ -215,9 +215,10 @@ def run_mmlu(base_url, model, items, think=False):
     for i, item in enumerate(items):
         prompt = fmt_mmlu(item["question"], item["choices"], item["dev"], think)
         try:
-            # With thinking on, the <think> block runs 200-500 tokens before
-            # the answer letter. 512 fits even a moderately verbose thinker.
-            mtok = 512 if think else 16
+            # With thinking on, the <think> block runs 500-900 tokens before
+            # the answer letter. Observed empirically: 512 fills completely,
+            # 1024 gives enough headroom for the answer to appear.
+            mtok = 1024 if think else 16
             resp, _, _ = ollama_gen(base_url, model, prompt, system=sys_prompt,
                                      max_tokens=mtok, temperature=0.0, think=think)
             pred = extract_choice(resp)

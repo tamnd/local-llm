@@ -19,9 +19,9 @@
 package llama
 
 /*
-// Go's cgo security rules block -Wl flags (commas are rejected). The actual
-// -Wl,--whole-archive and archive path are passed via CGO_LDFLAGS in the
-// Makefile's build-llama-static target. Only pure -l flags go here.
-#cgo LDFLAGS: -lstdc++ -lm -ldl -lpthread
+// All linker flags for the static build come from CGO_LDFLAGS in the
+// Makefile's build-llama-static target. The Go cgo security rules block
+// -Wl flags (commas rejected) and archive paths from #cgo directives.
+// This file exists only to carry the build tag.
 */
 import "C"

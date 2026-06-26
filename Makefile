@@ -30,7 +30,7 @@ GOMP_LIB   ?= /usr/lib/gcc/x86_64-linux-gnu/12
 build-llama-static: ## Build a single static CUDA binary (no .so deps at runtime)
 	scripts/build-libllama.sh --static
 	go clean -cache
-	CGO_ENABLED=1 CGO_LDFLAGS="-Wl,--whole-archive $(LLAMA_LIB)/libggml-cuda.a -Wl,--no-whole-archive -Wl,--start-group $(LLAMA_LIB)/libllama.a $(LLAMA_LIB)/libggml.a $(LLAMA_LIB)/libggml-base.a $(LLAMA_LIB)/libggml-cpu.a -Wl,--end-group -L$(CUDA_ROOT)/lib64 -L$(CUDA_ROOT)/lib64/stubs -lcublas_static -lcublasLt_static -lcudart_static -lcuda -lculibos -L$(GOMP_LIB) -lgomp -lstdc++ -lm -ldl -lpthread" $(GO) build -tags "llama llamastatic" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-cuda ./cmd/llmgw
+	CGO_ENABLED=1 CGO_LDFLAGS="-Wl,--start-group $(LLAMA_LIB)/libllama.a $(LLAMA_LIB)/libggml.a $(LLAMA_LIB)/libggml-base.a $(LLAMA_LIB)/libggml-cpu.a $(LLAMA_LIB)/libggml-cuda.a -Wl,--end-group -L$(CUDA_ROOT)/lib64 -L$(CUDA_ROOT)/lib64/stubs -lcublas_static -lcublasLt_static -lcudart_static -lcuda -lculibos -L$(GOMP_LIB) -lgomp -lstdc++ -lm -ldl -lpthread" $(GO) build -tags "llama llamastatic" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-cuda ./cmd/llmgw
 
 .PHONY: libllama
 libllama: ## Compile libllama shared libs with CUDA for the in-process engine

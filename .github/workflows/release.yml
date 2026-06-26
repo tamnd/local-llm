@@ -149,8 +149,8 @@ jobs:
             cuda-nvcc-12-6 \
             cuda-cudart-dev-12-6 \
             libcublas-dev-12-6 \
-            libgomp1 \
-            libgomp-dev
+            libgomp1
+          # libgomp.a (static) ships with gcc-12, pre-installed on ubuntu-22.04
 
       - name: Build llmgw-cuda (static libllama + Go link)
         env:

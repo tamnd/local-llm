@@ -85,9 +85,26 @@ mkdir -p "${VLLM_MODEL_DIR}"
 # Qwen3.6-35B-A3B uses gated-delta-network SSM layers; set --max-num-seqs=512
 # to keep the recurrent state cache from exceeding VRAM (default 1024 is too
 # large for a 24 GB card with FP8 weights already resident).
+#
+# HF_HUB_OFFLINE=1 is required. Without it huggingface_hub's _detect_agent
+# module tries a registry TCP connection during import; vLLM's _interrupt_init
+# SIGINT handler patches socket.connect and the connection raises
+# KeyboardInterrupt("terminated"), killing the service in ~16 s before any
+# weights load. With local paths + offline mode the startup is purely local.
+#
+# Pre-download weights before writing units:
+#   /opt/vllm-venv/bin/python -c "
+#     from huggingface_hub import snapshot_download
+#     snapshot_download('Qwen/Qwen3.6-35B-A3B-FP8',
+#                       local_dir='/models/hf/Qwen3.6-35B-A3B-FP8',
+#                       local_dir_use_symlinks=False)
+#     snapshot_download('openai/gpt-oss-20b',
+#                       local_dir='/models/hf/gpt-oss-20b',
+#                       local_dir_use_symlinks=False)
+#   "
 
 write_unit() {
-    local name="$1" model="$2" port="$3" mem="$4" extra_flags="${5:-}"
+    local name="$1" local_path="$2" port="$3" mem="$4" extra_flags="${5:-}"
     cat > "/etc/systemd/system/vllm-${name}.service" <<UNIT
 [Unit]
 Description=vLLM ${name} on port ${port}
@@ -97,10 +114,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=HF_HOME=${VLLM_MODEL_DIR}/.cache/huggingface
-Environment=HF_HUB_ENABLE_HF_TRANSFER=1
+Environment=HF_HUB_OFFLINE=1
 Environment=CUDA_VISIBLE_DEVICES=0
 ExecStart=${PY} -m vllm.entrypoints.openai.api_server \
-    --model ${model} \
+    --model ${local_path} \
     --host 127.0.0.1 \
     --port ${port} \
     --gpu-memory-utilization ${mem} \
@@ -120,8 +137,8 @@ UNIT
     echo "wrote /etc/systemd/system/vllm-${name}.service"
 }
 
-write_unit "qwen3-35b"   "Qwen/Qwen3.6-35B-A3B-FP8"  8100 "0.85" "--max-num-seqs 512"
-write_unit "gpt-oss-20b" "openai/gpt-oss-20b"          8101 "0.70" "--kv-cache-dtype fp8"
+write_unit "qwen3-35b"   "${VLLM_MODEL_DIR}/Qwen3.6-35B-A3B-FP8" 8100 "0.85" "--max-num-seqs 512"
+write_unit "gpt-oss-20b" "${VLLM_MODEL_DIR}/gpt-oss-20b"           8101 "0.70" "--kv-cache-dtype fp8"
 
 systemctl daemon-reload
 echo ""
@@ -129,7 +146,8 @@ echo "Units written. To start a backend:"
 echo "  systemctl start vllm-qwen3-35b"
 echo "  systemctl start vllm-gpt-oss-20b"
 echo ""
-echo "On first start vLLM downloads the weights (~18 GB each)."
-echo "Set HF_TOKEN if the model is gated: export HF_TOKEN=hf_..."
+echo "Download weights first (see comment block above write_unit), then:"
+echo "  systemctl start vllm-qwen3-35b"
+echo "  systemctl start vllm-gpt-oss-20b"
 echo ""
 echo "Then edit configs/llmgw.yaml and uncomment the vllm entries."

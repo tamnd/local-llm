@@ -18,8 +18,19 @@ build: ## Build the llmgw binary into ./bin (stub engine, no cgo)
 build-llama: ## Build llmgw with the in-process cgo engine (needs libllama, see scripts/build-libllama.sh)
 	CGO_ENABLED=1 $(GO) build -tags llama -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/llmgw
 
+# CUDA root for the static single-binary build. Override on machines where CUDA
+# lives elsewhere, e.g. CUDA_ROOT=/usr/local/cuda-12.6 make build-llama-static.
+CUDA_ROOT ?= /usr/local/cuda-12
+
+.PHONY: build-llama-static
+build-llama-static: ## Build a single static CUDA binary (no .so deps at runtime)
+	scripts/build-libllama.sh --static
+	CGO_ENABLED=1 \
+	CGO_LDFLAGS="-L$(CUDA_ROOT)/lib64 -L$(CUDA_ROOT)/lib64/stubs -lcuda -lcudart_static -lculibos" \
+	$(GO) build -tags "llama llamastatic" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-cuda ./cmd/llmgw
+
 .PHONY: libllama
-libllama: ## Compile libllama with CUDA for the in-process engine
+libllama: ## Compile libllama shared libs with CUDA for the in-process engine
 	scripts/build-libllama.sh
 
 .PHONY: test

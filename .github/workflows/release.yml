@@ -150,14 +150,10 @@ jobs:
             cuda-cudart-dev-12-6 \
             libcurand-dev-12-6
 
-      - name: Build static libllama (b9811, sm_89)
+      - name: Build llmgw-cuda (static libllama + Go link)
         env:
           CUDA_TOOLKIT_ROOT: /usr/local/cuda-12
           CUDA_ARCH: "89"
-        run: scripts/build-libllama.sh --static
-
-      - name: Build llmgw-cuda
-        env:
           CUDA_ROOT: /usr/local/cuda-12
         run: make build-llama-static
 

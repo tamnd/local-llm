@@ -19,6 +19,9 @@
 package llama
 
 /*
-#cgo LDFLAGS: -Wl,--whole-archive ${SRCDIR}/../third_party/llama.cpp/build/lib/libllama-full.a -Wl,--no-whole-archive -lstdc++ -lm -ldl -lpthread
+// Go's cgo security rules block -Wl flags (commas are rejected). The actual
+// -Wl,--whole-archive and archive path are passed via CGO_LDFLAGS in the
+// Makefile's build-llama-static target. Only pure -l flags go here.
+#cgo LDFLAGS: -lstdc++ -lm -ldl -lpthread
 */
 import "C"

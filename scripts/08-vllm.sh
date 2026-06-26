@@ -79,15 +79,43 @@ mkdir -p "${VLLM_MODEL_DIR}"
 # network-online.target so Tailscale is up before the gateway starts.
 #
 # Port assignments (matching configs/llmgw.yaml):
-#   8100 - qwen3.6:35b  -> Qwen/Qwen3.6-35B-A3B-FP8 (FP8 quant, fits in 24 GB)
-#   8101 - gpt-oss:20b  -> openai/gpt-oss-20b (native MXFP4 MoE)
+#   8100 - qwen3-14b-fp8  -> Qwen/Qwen3-14B-FP8 (FP8 quant, 15.21 GiB, fits in 24 GB)
+#   8101 - gpt-oss-20b    -> openai/gpt-oss-20b (native MXFP4 MoE, 12.8 GiB)
 #
-# Qwen3.6-35B-A3B uses gated-delta-network SSM layers; set --max-num-seqs=512
-# to keep the recurrent state cache from exceeding VRAM (default 1024 is too
-# large for a 24 GB card with FP8 weights already resident).
+# Only one model can run at a time on a single 24 GB GPU. The gateway uses
+# hot_swap to unload the active model before loading the next one.
+#
+# HF_HUB_OFFLINE=1 is required. Without it huggingface_hub's _detect_agent
+# module tries a registry TCP connection during import; vLLM's _interrupt_init
+# SIGINT handler patches socket.connect and the connection raises
+# KeyboardInterrupt("terminated"), killing the service in ~16 s before any
+# weights load. With local paths + offline mode the startup is purely local.
+#
+# Pre-download weights using wget (faster than snapshot_download on HF XET CDN):
+#   mkdir -p /models/hf/Qwen3-14B-FP8
+#   cd /models/hf/Qwen3-14B-FP8
+#   HF=https://huggingface.co/Qwen/Qwen3-14B-FP8
+#   for f in config.json generation_config.json tokenizer.json tokenizer_config.json \
+#             vocab.json merges.txt model.safetensors.index.json; do
+#       wget -q -nc "$HF/resolve/main/$f"
+#   done
+#   for i in 1 2 3 4; do
+#       wget -q -nc -c "$HF/resolve/main/model-0000${i}-of-00004.safetensors" &
+#   done; wait
+#
+#   mkdir -p /models/hf/gpt-oss-20b
+#   cd /models/hf/gpt-oss-20b
+#   HF2=https://huggingface.co/openai/gpt-oss-20b
+#   for f in config.json generation_config.json tokenizer.json tokenizer_config.json \
+#             special_tokens_map.json chat_template.jinja model.safetensors.index.json; do
+#       wget -q -nc "$HF2/resolve/main/$f"
+#   done
+#   for i in 0 1 2; do
+#       wget -q -nc -c "$HF2/resolve/main/model-0000${i}-of-00002.safetensors" &
+#   done; wait
 
 write_unit() {
-    local name="$1" model="$2" port="$3" mem="$4" extra_flags="${5:-}"
+    local name="$1" local_path="$2" port="$3" mem="$4" extra_flags="${5:-}"
     cat > "/etc/systemd/system/vllm-${name}.service" <<UNIT
 [Unit]
 Description=vLLM ${name} on port ${port}
@@ -97,19 +125,20 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=HF_HOME=${VLLM_MODEL_DIR}/.cache/huggingface
-Environment=HF_HUB_ENABLE_HF_TRANSFER=1
+Environment=HF_HUB_OFFLINE=1
 Environment=CUDA_VISIBLE_DEVICES=0
+Environment="PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+KillMode=control-group
 ExecStart=${PY} -m vllm.entrypoints.openai.api_server \
-    --model ${model} \
+    --model ${local_path} \
     --host 127.0.0.1 \
     --port ${port} \
     --gpu-memory-utilization ${mem} \
     --tensor-parallel-size 1 \
-    --max-model-len 32768 \
     --enable-chunked-prefill \
     ${extra_flags}
 Restart=on-failure
-RestartSec=10
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vllm-${name}
@@ -120,16 +149,19 @@ UNIT
     echo "wrote /etc/systemd/system/vllm-${name}.service"
 }
 
-write_unit "qwen3-35b"   "Qwen/Qwen3.6-35B-A3B-FP8"  8100 "0.85" "--max-num-seqs 512"
-write_unit "gpt-oss-20b" "openai/gpt-oss-20b"          8101 "0.70" "--kv-cache-dtype fp8"
+# Qwen3.6-27B-FP8 (30.9 GB) and Qwen3.6-35B-A3B-FP8 (~27 GB) both exceed the
+# 24 GB VRAM on the RTX 4090. Use Qwen3-14B-FP8 (16.3 GB) instead — same
+# architecture family, fits with room for KV cache.
+#
+# gpt-oss-20b MXFP4 weights total ~20 GB (U8 + BF16 embeddings). It barely
+# fits at 0.92 utilization (22.1 GB effective) with a shorter context window.
+write_unit "qwen3-14b-fp8" "${VLLM_MODEL_DIR}/Qwen3-14B-FP8" 8100 "0.85" "--max-model-len 16384"
+write_unit "gpt-oss-20b"   "${VLLM_MODEL_DIR}/gpt-oss-20b"   8101 "0.92" "--kv-cache-dtype fp8 --max-model-len 8192"
 
 systemctl daemon-reload
 echo ""
-echo "Units written. To start a backend:"
-echo "  systemctl start vllm-qwen3-35b"
+echo "Units written. Download weights first (see comment block above write_unit), then:"
+echo "  systemctl start vllm-qwen3-14b-fp8"
 echo "  systemctl start vllm-gpt-oss-20b"
-echo ""
-echo "On first start vLLM downloads the weights (~18 GB each)."
-echo "Set HF_TOKEN if the model is gated: export HF_TOKEN=hf_..."
 echo ""
 echo "Then edit configs/llmgw.yaml and uncomment the vllm entries."

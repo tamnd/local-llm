@@ -148,46 +148,42 @@ models:
 
   # ---- vLLM entries ---------------------------------------------------------
   #
-  # vLLM (Option B) uses FlashInfer's fused MoE CUDA kernels and chunked prefill.
-  # On Ada (sm_89), its MoE dispatch is far better than llama.cpp b9780 for
-  # qwen3.6:35b and gpt-oss:20b. Requires scripts/08-vllm.sh to install and
-  # start the systemd units before the gateway loads these entries.
+  # vLLM (Option B) uses FlashInfer fused kernels and chunked prefill.
+  # Only one vLLM model can be resident at a time on the 24 GB RTX 4090;
+  # the gateway's hot_swap unloads the current model before loading the next.
   #
   # Port assignments (must match 08-vllm.sh):
-  #   8100 - qwen3-35b-vllm
+  #   8100 - qwen3-14b-fp8
   #   8101 - gpt-oss-20b-vllm
   #
-  # vLLM does not yet support the hybrid SSM architecture (qwen3.6:27b), so
-  # that model stays on Ollama or inproc.
+  # Requires scripts/08-vllm.sh to be run once to install vLLM and write the
+  # systemd units. Then enable and start: systemctl enable --now vllm-qwen3-14b-fp8
 
-  # qwen3.6:35b via vLLM using the FP8 quantized variant. The FP8 weights use
-  # ~18 GB; vLLM's chunked prefill + FlashInfer MoE kernels target >175 tok/s.
-  # Actual HF model: Qwen/Qwen3.6-35B-A3B-FP8 (official Qwen FP8 quant).
-  # Run: systemctl start vllm-qwen3-35b
-  #
-  # qwen3-35b-vllm:
-  #   backend: vllm
-  #   base_url: "http://127.0.0.1:8100"
-  #   upstream_model: "Qwen/Qwen3.6-35B-A3B-FP8"
-  #   vram_mb: 21000
-  #   params:
-  #     gpu_memory_utilization: "0.85"
-  #     max_model_len: 32768
-  #     enforce_eager: false
+  # Qwen3-14B-FP8: dense 14B at FP8, 15.21 GiB, max_model_len 16384 (KV
+  # cache fits in the ~3.6 GiB remaining after weights + CUDA graphs).
+  # Run: systemctl start vllm-qwen3-14b-fp8
+  qwen3-14b-fp8:
+    backend: vllm
+    base_url: "http://127.0.0.1:8100"
+    upstream_model: "/models/hf/Qwen3-14B-FP8"
+    vram_mb: 20000
+    params:
+      gpu_memory_utilization: "0.85"
+      max_model_len: "16384"
+      enable_chunked_prefill: "true"
 
-  # gpt-oss:20b via vLLM. Uses native MXFP4 MoE quant + FP8 KV cache.
-  # Actual HF model: openai/gpt-oss-20b (OpenAI OSS release).
+  # gpt-oss-20b: native MXFP4 MoE, 12.8 GiB, FP8 KV cache, max_model_len 8192.
   # Run: systemctl start vllm-gpt-oss-20b
-  #
-  # gpt-oss-20b-vllm:
-  #   backend: vllm
-  #   base_url: "http://127.0.0.1:8101"
-  #   upstream_model: "openai/gpt-oss-20b"
-  #   vram_mb: 14000
-  #   params:
-  #     gpu_memory_utilization: "0.70"
-  #     max_model_len: 32768
-  #     enforce_eager: false
+  gpt-oss-20b-vllm:
+    backend: vllm
+    base_url: "http://127.0.0.1:8101"
+    upstream_model: "/models/hf/gpt-oss-20b"
+    vram_mb: 22000
+    params:
+      gpu_memory_utilization: "0.92"
+      max_model_len: "8192"
+      kv_cache_dtype: "fp8"
+      enable_chunked_prefill: "true"
 
 manager:
   hot_swap: true          # unload the outgoing model before loading the next

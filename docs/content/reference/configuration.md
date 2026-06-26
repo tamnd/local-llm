@@ -83,6 +83,10 @@ matter depend on the backend. The ones used in the shipped config and catalog:
 | `tabby` | `admin_key` | TabbyAPI admin key. |
 | `tabby` | `max_seq_len` | Maximum sequence length TabbyAPI loads the model with. |
 | `tabby` | `cache_mode` | KV-cache quantization mode, for example `Q8`. |
+| `vllm` | `gpu_memory_utilization` | Fraction of GPU memory vLLM may allocate, e.g. `"0.85"`. |
+| `vllm` | `max_model_len` | Maximum context length in tokens, e.g. `"16384"`. |
+| `vllm` | `kv_cache_dtype` | KV-cache quantization, e.g. `"fp8"`. Default is `"auto"`. |
+| `vllm` | `enable_chunked_prefill` | `"true"` enables chunked prefill. Recommended for long contexts. |
 | `inproc` | `model_path` | Path to the GGUF the in-process engine loads. Required for `inproc`. |
 | `inproc` | `draft_path` | Optional path to a vocab-matched draft GGUF for speculative decoding. |
 | `inproc` | `n_ctx` | Context length. |

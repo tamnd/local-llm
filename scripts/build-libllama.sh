@@ -24,10 +24,10 @@ BUILD="$SRC/build"
 
 # Pin to a commit or tag. Bump deliberately and re-measure; see doc 17 on the
 # CUDA 13.2 gibberish regression that makes the toolchain version matter.
-# 51eae8cf is the main HEAD as of 2026-06-24, 3 vulkan-only commits past b9780.
-# The SSM/MoE/MXFP4 CUDA paths landed in b9780 itself; main is functionally
-# identical for our Ada (sm_89) CUDA model code.
-LLAMA_CPP_REF="${LLAMA_CPP_REF:-51eae8cfcac4fb403bcf91d1fb524fec0974f510}"
+# b9811 (2026-06-26) is 31 builds past b9780. It includes batched MoE expert
+# dispatch and fused SSM kernels for Ada (sm_89), which should close the
+# throughput gap vs Ollama on qwen3.6:27b and qwen3.6:35b.
+LLAMA_CPP_REF="${LLAMA_CPP_REF:-9df06805eee8d600ccc3cb1b099658c9a91b0bae}"
 CUDA_ARCH="${CUDA_ARCH:-89}" # Ada / RTX 4090 is sm_89
 # Pin the CUDA toolkit to 12.x when the system has multiple versions installed.
 # CUDA 13.x requires a driver >= 590; current GamingPC driver is 566.36 (max 12.7).
@@ -44,15 +44,24 @@ git -C "$SRC" fetch --tags --quiet
 git -C "$SRC" checkout --quiet "$LLAMA_CPP_REF"
 
 # Apply compatibility patches for Ollama-format GGUFs (arch name aliases,
-# tensor name differences, partial array fills). The patch was generated from
-# the GamingPC WSL2 working tree and lives at patches/llama-b9780-ollama-compat.patch.
+# tensor name differences, partial array fills). The patch was written against
+# b9780 and none of its hunks are upstream as of b9811, but context lines
+# drift across builds. Try strict first, then relaxed (-C1, -C0).
 PATCH="$ROOT/patches/llama-b9780-ollama-compat.patch"
 if [ -f "$PATCH" ]; then
-	if git -C "$SRC" apply --check "$PATCH" 2>/dev/null; then
-		git -C "$SRC" apply "$PATCH"
-		echo "applied $PATCH"
-	else
-		echo "patch already applied or does not apply cleanly; skipping"
+	applied=0
+	for ctx in "" "-C1" "-C0"; do
+		if git -C "$SRC" apply --check $ctx "$PATCH" 2>/dev/null; then
+			git -C "$SRC" apply $ctx "$PATCH"
+			echo "applied $PATCH (context=$ctx)"
+			applied=1
+			break
+		fi
+	done
+	if [ $applied -eq 0 ]; then
+		echo "WARNING: $PATCH did not apply at any context level; Ollama GGUF compat patches skipped"
+		echo "  Run: git -C $SRC apply --reject $PATCH"
+		echo "  to see which hunks failed, then update the patch for the new llama.cpp version."
 	fi
 fi
 

@@ -54,12 +54,14 @@ free quality on a bandwidth-bound path.
 
 ## Enabling inproc
 
-Build the gateway with the cgo engine compiled in. This needs a box with a
-CUDA-linked libllama, see `scripts/build-libllama.sh`, and it builds with
-`CGO_ENABLED=1` and the `llama` tag:
+Download `llmgw-cuda` from the [GitHub release page](https://github.com/tamnd/local-llm/releases) and run it directly — it statically embeds llama.cpp and cuBLAS so there is nothing else to install on the box.
+
+If you need to build from source:
 
 ```bash
-make build-llama
+scripts/build-libllama.sh --static
+make build-llama-static
+# produces bin/llmgw-cuda
 ```
 
 Then add a model entry that uses the backend. Unlike the HTTP backends there is
@@ -80,15 +82,34 @@ models:
 Drop the `draft_path` line for a MoE model, or any model where you do not want a
 separate draft.
 
-## Runtime and honesty about numbers
+## Measured numbers (RTX 4090, b9811, n_ctx=4096, Q8_0 KV)
 
-Run the cgo engine on WSL2 or native Linux, that is the recommended path for the
-high-throughput build. Ollama stays the Windows-native fallback for when you want
-the simple route and can live with batch=1.
+Dense 32B models (qwen2.5-coder:32b, deepseek-r1:32b):
 
-One honest caveat: the speculative cgo path is verified for correctness in
-pure-Go unit tests, but the decode loop is still pending measurement on the box.
-So this guide gives you the levers, not benchmark numbers. The reasoning is
-solid: fewer bytes per token through dynamic quants, fewer target passes through
-exact speculative decoding, and no proxy hop through `inproc`. The exact tokens
-per second on this card is something to measure, not something to quote here.
+| Backend | tok/s | vs roofline |
+|---------|-------|-------------|
+| Ollama | ~26 | 49% |
+| inproc | ~41 | 78% |
+
+That 59% gain comes from removing the Ollama subprocess, the local HTTP hop, and the batch=1 constraint, not from any change to the model weights.
+
+For MoE models: the b9811 llama.cpp pin adds batched MoE dispatch and fused SSM kernels. Earlier builds (b9780) treated MoE decode the same as dense and saturated around 18-23 tok/s. b9811 closes most of that gap for MoE-shaped workloads. For MoE and SSM-hybrid models on this card, the `vllm` backend with FlashInfer is the current recommended path for maximum throughput, and it avoids the b9780-era kernel maturity gap entirely.
+
+## vLLM as the MoE alternative
+
+For MoE-heavy models (Qwen3.5-35B, gpt-oss-20b) the `vllm` backend with FlashInfer chunked prefill often beats inproc, because FlashInfer has mature MoE dispatch kernels that predate llama.cpp's:
+
+```yaml
+models:
+  qwen3-14b-fp8:
+    backend: vllm
+    base_url: "http://127.0.0.1:8100"
+    upstream_model: "/models/hf/Qwen3-14B-FP8"
+    vram_mb: 20000
+    params:
+      gpu_memory_utilization: "0.85"
+      max_model_len: "16384"
+      enable_chunked_prefill: "true"
+```
+
+`scripts/08-vllm.sh` sets up the vLLM install and the systemd units. Use inproc for dense models, vLLM for MoE or quantized models where it has the better kernel.

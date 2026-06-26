@@ -16,8 +16,9 @@ The whole thing lives on one workstation (GamingPC, RTX 4090, i9-13900K, 64 GB) 
 - **One stable OpenAI-compatible API.** `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, `/v1/models`, with SSE streaming. Point any OpenAI client at it and change nothing else.
 - **Hot-swaps one GPU between big models.** The 24 GB card holds only the model in use. Ask for a different model and `llmgw` evicts the current one and loads the next, so models that could never coexist all live behind the same endpoint.
 - **Keeps an embedding model resident.** A small embedding model stays pinned in VRAM alongside the chat model, so RAG retrieval never pays a reload.
+- **Five backends, one config.** Ollama for zero-config Windows-native use; TabbyAPI/ExLlamaV3 for EXL2 quants; vLLM for FP8 and MXFP4 models with FlashInfer kernels; and the in-process llama.cpp engine for maximum tokens per second on dense 32B models.
 - **The tailnet is the only door in.** No public exposure. The data plane binds `0.0.0.0:8888`, the admin plane stays on loopback `8889`, and the only way to reach the box is over Tailscale (WireGuard, ACLs).
-- **In-process zero-proxy engine.** An optional cgo build embeds llama.cpp so the gateway itself runs the decode loop with no subprocess and no HTTP hop, for maximum tokens per second on the dense tier.
+- **Static CUDA binary, no setup.** `llmgw-cuda` on the release page statically embeds llama.cpp, cuBLAS, and cudart. Download and run on any Linux machine with an NVIDIA driver, no library setup needed.
 - **Pure Go, one binary.** The default build is pure Go with a single dependency (yaml.v3) on Go 1.26. One file to ship, one file to run.
 
 The local tier on this card is the ~30B class: 30-35B mixture-of-experts models with ~3-4B active params for the fast daily driver, and 24-32B dense models when you want peak quality. The 400B-1T frontier weights are out of scope to run whole.

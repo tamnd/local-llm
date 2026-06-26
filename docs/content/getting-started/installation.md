@@ -51,13 +51,28 @@ Mount your config and expose the admin plane as needed; see the [configuration r
 
 ## The in-process CUDA engine
 
-The pure-Go binary above does not include the in-process `inproc` backend. That path embeds llama.cpp via cgo so the gateway runs the decode loop itself, with no subprocess and no HTTP hop, for maximum tokens per second on the dense tier. It is a separate build done on the box, against a CUDA-linked `libllama`:
+The pure-Go binary does not include the in-process `inproc` backend. That path embeds llama.cpp via cgo so the gateway runs the decode loop itself, with no subprocess and no HTTP hop, for maximum tokens per second on the dense tier.
+
+**Prebuilt static binary.** The simplest way to get the inproc engine is to download `llmgw-cuda` from the [GitHub release page](https://github.com/tamnd/local-llm/releases). It statically embeds cuBLAS and cudart, so it needs no extra `.so` files at runtime. Drop it on any Linux machine with an NVIDIA driver ≥ 525:
 
 ```bash
-make build-llama
+chmod +x llmgw-cuda
+./llmgw-cuda -config llmgw.yaml
 ```
 
-This sets `CGO_ENABLED=1` and builds with `-tags llama`. It is the high-throughput path under WSL2 or Linux. On Windows-native, Ollama stays the zero-config fallback. The configuration reference covers wiring an `inproc` model into your config.
+**Build from source.** If you need a custom llama.cpp build or a different CUDA version, build it on the box:
+
+```bash
+# Build static archives (runs cmake with CUDA)
+scripts/build-libllama.sh --static
+
+# Link the static binary
+make build-llama-static
+```
+
+This produces `bin/llmgw-cuda`, statically linking everything except the NVIDIA driver. The `make build-llama` target (no `--static`) links shared `.so` files and requires `LD_LIBRARY_PATH` at runtime; that path is faster for development iteration.
+
+The configuration reference covers wiring an `inproc` model into your config.
 
 ## Verify
 

@@ -16,7 +16,6 @@ package llama
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../third_party/llama.cpp/include -I${SRCDIR}/../third_party/llama.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/../third_party/llama.cpp/build/bin -lllama -lggml -lggml-base -lggml-cpu -lggml-cuda -lstdc++ -lm
 #include <stdlib.h>
 #include <string.h>
 #include "llama.h"

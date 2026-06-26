@@ -110,3 +110,59 @@ jobs:
           else
             echo "Linux repo refresh not accepted (HTTP $code); skipping"
           fi
+
+  # Build a static CUDA single-binary (llmgw-cuda) and attach it to the release.
+  # Runs on ubuntu-22.04 where CUDA 12.x packages are well-tested. The binary
+  # links libcuda.so dynamically (NVIDIA driver, always present on any CUDA box)
+  # and embeds cudart statically, so it runs on any Linux host with a driver
+  # compatible with the CUDA 12.x ABI (driver >= 525) and no extra .so setup.
+  # The in-process cgo engine needs CUDA and is built here only; the normal
+  # goreleaser cross-compiled archives above use CGO_ENABLED=0.
+  cuda-build:
+    if: github.ref_type == 'tag'
+    needs: release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      # Add the NVIDIA CUDA APT repository and install the compiler + static
+      # cudart. We only need nvcc and cudart-dev to build; no GPU is needed on
+      # the runner itself because llama.cpp uses runtime API calls and the
+      # cuda_stub library resolves them at link time.
+      - name: Install CUDA 12 build toolchain
+        run: |
+          wget -qO /tmp/cuda-keyring.deb \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-12-6 \
+            cuda-cudart-dev-12-6 \
+            libcublas-dev-12-6 \
+            libgomp1 \
+            libgomp-dev
+
+      - name: Build llmgw-cuda (static libllama + Go link)
+        env:
+          CUDA_TOOLKIT_ROOT: /usr/local/cuda-12
+          CUDA_ARCH: "89"
+          CUDA_ROOT: /usr/local/cuda-12
+        run: make build-llama-static LLAMA_LIB=${{ github.workspace }}/third_party/llama.cpp/build/lib
+
+      - name: Upload llmgw-cuda to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            bin/llmgw-cuda \
+            --clobber

@@ -148,7 +148,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cuda-nvcc-12-6 \
             cuda-cudart-dev-12-6 \
-            libcurand-dev-12-6
+            libcublas-dev-12-6 \
+            libgomp1 \
+            libgomp-dev
 
       - name: Build llmgw-cuda (static libllama + Go link)
         env:

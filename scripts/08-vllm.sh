@@ -79,12 +79,11 @@ mkdir -p "${VLLM_MODEL_DIR}"
 # network-online.target so Tailscale is up before the gateway starts.
 #
 # Port assignments (matching configs/llmgw.yaml):
-#   8100 - qwen3.6:35b  -> Qwen/Qwen3.6-35B-A3B-FP8 (FP8 quant, fits in 24 GB)
-#   8101 - gpt-oss:20b  -> openai/gpt-oss-20b (native MXFP4 MoE)
+#   8100 - qwen3-14b-fp8  -> Qwen/Qwen3-14B-FP8 (FP8 quant, 15.21 GiB, fits in 24 GB)
+#   8101 - gpt-oss-20b    -> openai/gpt-oss-20b (native MXFP4 MoE, 12.8 GiB)
 #
-# Qwen3.6-35B-A3B uses gated-delta-network SSM layers; set --max-num-seqs=512
-# to keep the recurrent state cache from exceeding VRAM (default 1024 is too
-# large for a 24 GB card with FP8 weights already resident).
+# Only one model can run at a time on a single 24 GB GPU. The gateway uses
+# hot_swap to unload the active model before loading the next one.
 #
 # HF_HUB_OFFLINE=1 is required. Without it huggingface_hub's _detect_agent
 # module tries a registry TCP connection during import; vLLM's _interrupt_init
@@ -129,6 +128,7 @@ Environment=HF_HOME=${VLLM_MODEL_DIR}/.cache/huggingface
 Environment=HF_HUB_OFFLINE=1
 Environment=CUDA_VISIBLE_DEVICES=0
 Environment="PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+KillMode=control-group
 ExecStart=${PY} -m vllm.entrypoints.openai.api_server \
     --model ${local_path} \
     --host 127.0.0.1 \
@@ -138,7 +138,7 @@ ExecStart=${PY} -m vllm.entrypoints.openai.api_server \
     --enable-chunked-prefill \
     ${extra_flags}
 Restart=on-failure
-RestartSec=10
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vllm-${name}

@@ -155,7 +155,7 @@ jobs:
           CUDA_TOOLKIT_ROOT: /usr/local/cuda-12
           CUDA_ARCH: "89"
           CUDA_ROOT: /usr/local/cuda-12
-        run: make build-llama-static
+        run: make build-llama-static LLAMA_LIB=${{ github.workspace }}/third_party/llama.cpp/build/lib
 
       - name: Upload llmgw-cuda to release
         env:

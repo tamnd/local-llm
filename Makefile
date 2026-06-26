@@ -22,13 +22,21 @@ build-llama: ## Build llmgw with the in-process cgo engine (needs libllama, see 
 # lives elsewhere, e.g. CUDA_ROOT=/usr/local/cuda-12.6 make build-llama-static.
 CUDA_ROOT ?= /usr/local/cuda-12
 
-LIBLLAMA_FULL := $(abspath third_party/llama.cpp/build/lib/libllama-full.a)
+LLAMA_LIB := $(abspath third_party/llama.cpp/build/lib)
 
 .PHONY: build-llama-static
 build-llama-static: ## Build a single static CUDA binary (no .so deps at runtime)
 	scripts/build-libllama.sh --static
 	CGO_ENABLED=1 \
-	CGO_LDFLAGS="-Wl,--whole-archive $(LIBLLAMA_FULL) -Wl,--no-whole-archive -L$(CUDA_ROOT)/lib64 -L$(CUDA_ROOT)/lib64/stubs -lcuda -lcudart_static -lculibos" \
+	CGO_LDFLAGS="-Wl,--whole-archive $(LLAMA_LIB)/libggml-cuda.a -Wl,--no-whole-archive \
+	  -Wl,--start-group \
+	  $(LLAMA_LIB)/libllama.a \
+	  $(LLAMA_LIB)/libggml.a \
+	  $(LLAMA_LIB)/libggml-base.a \
+	  $(LLAMA_LIB)/libggml-cpu.a \
+	  -Wl,--end-group \
+	  -L$(CUDA_ROOT)/lib64 -L$(CUDA_ROOT)/lib64/stubs \
+	  -lcuda -lcudart_static -lculibos" \
 	$(GO) build -tags "llama llamastatic" -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-cuda ./cmd/llmgw
 
 .PHONY: libllama

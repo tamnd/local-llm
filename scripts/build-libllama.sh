@@ -91,32 +91,8 @@ if [ "$STATIC" -eq 1 ]; then
 	echo "building static archives"
 	cmake --build "$BUILD" --config Release -j "$(nproc)" --target llama ggml
 
-	# Combine all static archives into one fat archive so the Go cgo link step
-	# only needs -Wl,--whole-archive libllama-full.a -Wl,--no-whole-archive.
-	# This avoids undefined-symbol errors when llama.a references ggml_cuda.a.
-	COMBINED="$BUILD/lib/libllama-full.a"
-	echo "combining archives into $COMBINED"
-	rm -f "$COMBINED"
-
-	TMPDIR="$(mktemp -d)"
-	trap 'rm -rf "$TMPDIR"' EXIT
-
-	for archive in "$BUILD"/lib/*.a; do
-		name="$(basename "$archive" .a)"
-		mkdir -p "$TMPDIR/$name"
-		ar x "$archive" --output="$TMPDIR/$name"
-		# Prefix each object with its archive name to avoid collisions.
-		for obj in "$TMPDIR/$name"/*.o; do
-			[ -f "$obj" ] || continue
-			mv "$obj" "$TMPDIR/${name}_$(basename "$obj")"
-		done
-	done
-
-	ar rcs "$COMBINED" "$TMPDIR"/*.o
-	echo "combined archive: $(du -sh "$COMBINED" | cut -f1)  $COMBINED"
-
 	echo
-	echo "static libllama built"
+	echo "static libllama built under $BUILD/lib"
 	echo "now run: make build-llama-static"
 else
 	echo "configuring shared build (CUDA arch $CUDA_ARCH, toolkit $CUDA_TOOLKIT_ROOT)"

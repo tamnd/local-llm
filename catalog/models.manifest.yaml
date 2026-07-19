@@ -8,22 +8,29 @@
 ollama:
   models:
     - name: "qwen3:30b-a3b"
-      note: "general chat + tools, MoE"
+      note: "general chat + tools, MoE; ollama arm of the MoE bench grid"
+    - name: "qwen3:32b"
+      note: "dense 32B GGUF Q4_K_M; ollama arm of the dense bench grid"
     - name: "qwen3-coder:30b-a3b"
       note: "code-tuned sibling"
     - name: "nomic-embed-text"
       note: "embeddings, stays resident (coexist)"
 
-# TabbyAPI serves EXL2 quants downloaded into its models dir. source is the
-# Hugging Face repo; dir is the folder name TabbyAPI loads by (matches
-# upstream_model in the gateway config).
+# TabbyAPI (ExLlamaV3) serves EXL3 quants downloaded into its models dir. source
+# is the Hugging Face repo; dir is the folder name TabbyAPI loads by (matches
+# upstream_model in the gateway config). EXL3 supersedes EXL2 as the 2026 quant
+# format, so the roster provisions EXL3 only.
 tabby:
-  models_dir: "C:/models/exl2"
+  models_dir: "C:/models/exl3"
   models:
-    - dir: "Qwen3-32B-exl2-4.0bpw"
-      source: "hf:turboderp/Qwen3-32B-exl2"
+    - dir: "Qwen3-32B-exl3-4.0bpw"
+      source: "hf:turboderp/Qwen3-32B-exl3"
       revision: "4.0bpw"
-      note: "dense 32B at 4bpw, higher quality than the MoE"
+      note: "dense 32B at 4bpw EXL3; ExLlamaV3 arm of the dense bench grid"
+    - dir: "Qwen3-30B-A3B-exl3-4.0bpw"
+      source: "hf:turboderp/Qwen3-30B-A3B-exl3"
+      revision: "4.0bpw"
+      note: "MoE 30B-A3B at 4bpw EXL3; ExLlamaV3 arm of the MoE bench grid"
 
 # llama-server loads a single GGUF by path. Listed for completeness; not wired
 # into the default gateway config. Swap in by adding a models entry with
@@ -36,11 +43,20 @@ llama:
       note: "example dense GGUF for the llama-server backend"
 
 # vLLM loads from a local AWQ/GPTQ checkout or an HF id. Process-driven backend;
-# slow to start, fast to serve. Example only.
+# slow to start, fast to serve. dir is the local checkout the gateway config's
+# upstream_model path points at; download with the wget recipe in scripts/08-vllm.sh.
 vllm:
+  models_dir: "/models/hf"
   models:
-    - id: "Qwen/Qwen3-30B-A3B-AWQ"
-      note: "AWQ MoE for the vLLM backend, --quantization awq"
+    - dir: "Qwen3-14B-FP8"
+      source: "hf:Qwen/Qwen3-14B-FP8"
+      note: "dense 14B FP8, the small-tier vLLM model (fits FP8 under 24 GB)"
+    - dir: "Qwen3-32B-AWQ"
+      source: "hf:Qwen/Qwen3-32B-AWQ"
+      note: "dense 32B AWQ int4; vLLM arm of the dense bench grid, --quantization awq_marlin"
+    - dir: "Qwen3-30B-A3B-AWQ"
+      source: "hf:Qwen/Qwen3-30B-A3B-AWQ"
+      note: "MoE 30B-A3B AWQ int4; vLLM arm of the MoE bench grid, --quantization awq_marlin"
 
 # inproc loads a GGUF directly into the gateway process via the in-process cgo
 # engine (the zero-proxy high-throughput path, spec 2065 docs 15 to 17). file is

@@ -26,7 +26,7 @@ default_model: chat
 aliases:
   chat: qwen3-30b-a3b
   coder: qwen3-coder-30b-a3b
-  reasoning: qwen3-32b-exl2
+  reasoning: qwen3-32b-exl3
   embed: nomic-embed-text
 
 models:
@@ -48,13 +48,15 @@ models:
     params:
       keep_alive: "30m"
 
-  # Dense 32B at 4bpw EXL2 through TabbyAPI, ~47-48 tok/s. Higher quality, slower.
-  qwen3-32b-exl2:
+  # Dense 32B at ~4bpw EXL3 through TabbyAPI/ExLlamaV3. EXL3 supersedes EXL2 (the
+  # 2026 quant format, better fidelity per bit), so the roster runs EXL3 only.
+  qwen3-32b-exl3:
     backend: tabby
     base_url: "http://127.0.0.1:5000"
-    upstream_model: "Qwen3-32B-exl2-4.0bpw"
+    upstream_model: "Qwen3-32B-exl3-4.0bpw"
     vram_mb: 20500
     params:
+      quant: "exl3"
       admin_key: "REPLACE_ME_tabby_admin_key"
       max_seq_len: 32768
       cache_mode: "Q8"
@@ -69,6 +71,65 @@ models:
     coexist: true
     params:
       keep_alive: "60m"
+
+  # ---- cross-backend bench matrix -------------------------------------------
+  #
+  # The same two models (a dense 32B and a 30B-A3B MoE) served by all three
+  # runtimes at the ~4-bit class each backend uses, so cmd/llmbench and
+  # scripts/solve-swebench.sh compare ollama vs vLLM vs ExLlamaV3 like for like.
+  # FP8 is not in the grid for these sizes: a 30-32B model at FP8 exceeds the
+  # 24 GB card, so the fair shared point is 4-bit (GGUF Q4 / AWQ int4 / EXL3
+  # 4bpw). The 14B FP8 and gpt-oss entries below are a separate, smaller tier.
+  # Weights are provisioned by scripts (catalog/models.manifest.yaml); until then
+  # these resolve but 502 at request time.
+
+  # Dense 32B, GGUF Q4_K_M through Ollama. The ollama arm of the dense grid.
+  qwen3-32b:
+    backend: ollama
+    base_url: "http://127.0.0.1:11434"
+    upstream_model: "qwen3:32b"
+    vram_mb: 20000
+    params:
+      quant: "gguf-q4_k_m"
+      keep_alive: "30m"
+
+  # Dense 32B, AWQ int4 through vLLM. Port 8102 (see scripts/08-vllm.sh).
+  qwen3-32b-awq:
+    backend: vllm
+    base_url: "http://127.0.0.1:8102"
+    upstream_model: "/models/hf/Qwen3-32B-AWQ"
+    vram_mb: 22000
+    params:
+      quant: "awq"
+      quantization: "awq_marlin"
+      gpu_memory_utilization: "0.90"
+      max_model_len: "16384"
+      enable_chunked_prefill: "true"
+
+  # MoE 30B-A3B, AWQ int4 through vLLM. Port 8103.
+  qwen3-30b-a3b-awq:
+    backend: vllm
+    base_url: "http://127.0.0.1:8103"
+    upstream_model: "/models/hf/Qwen3-30B-A3B-AWQ"
+    vram_mb: 21000
+    params:
+      quant: "awq"
+      quantization: "awq_marlin"
+      gpu_memory_utilization: "0.90"
+      max_model_len: "16384"
+      enable_chunked_prefill: "true"
+
+  # MoE 30B-A3B, ~4bpw EXL3 through TabbyAPI/ExLlamaV3. The MoE arm on ExLlamaV3.
+  qwen3-30b-a3b-exl3:
+    backend: tabby
+    base_url: "http://127.0.0.1:5000"
+    upstream_model: "Qwen3-30B-A3B-exl3-4.0bpw"
+    vram_mb: 18000
+    params:
+      quant: "exl3"
+      admin_key: "REPLACE_ME_tabby_admin_key"
+      max_seq_len: 32768
+      cache_mode: "Q8"
 
   # ---- inproc (llama.cpp zero-proxy) entries --------------------------------
   #

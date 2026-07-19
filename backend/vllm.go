@@ -28,6 +28,16 @@ func (v *VLLM) ID() string { return config.BackendVLLM }
 // returning. vLLM's KV-pool allocation and CUDA graph work can take minutes, so
 // the readiness timeout is 300 seconds.
 func (v *VLLM) Load(ctx context.Context, entry config.ModelEntry) error {
+	// Adopt an already-serving vLLM instead of spawning one. vLLM pins a single
+	// model per server, so a healthy endpoint at the configured port is the model
+	// this entry wants. This is the path used when vLLM runs as an externally
+	// managed service (a systemd unit) and, on the RTX 4090 box, when it runs in
+	// WSL2 while the gateway runs on the Windows host and so cannot exec the Linux
+	// `vllm` binary itself: the gateway reaches the WSL server over
+	// localhostForwarding and just proxies to it.
+	if v.Healthy(ctx, entry) == nil {
+		return nil
+	}
 	bin := paramString(entry.Params, "bin", "vllm")
 	args := buildVLLMArgs(entry)
 	ready := func(c context.Context) error { return v.Healthy(c, entry) }

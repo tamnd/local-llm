@@ -1,11 +1,43 @@
 package backend
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/tamnd/local-llm/config"
 )
+
+// TestVLLMLoadAdoptsHealthyServer covers the WSL/systemd path: when a vLLM server
+// is already answering /health at base_url, Load adopts it and never spawns a
+// process. This is what lets the Windows-host gateway serve a vLLM that runs in
+// WSL2, where it cannot exec the Linux binary itself.
+func TestVLLMLoadAdoptsHealthyServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	fl := &fakeLauncher{}
+	v := &VLLM{proxy: newProxy("test"), procs: &procTable{launcher: fl}}
+	entry := config.ModelEntry{
+		BaseURL:       srv.URL,
+		UpstreamModel: "/models/hf/Qwen3-32B-AWQ",
+		Params:        map[string]any{"quantization": "awq_marlin"},
+	}
+	if err := v.Load(context.Background(), entry); err != nil {
+		t.Fatalf("Load of a healthy server should succeed by adoption, got %v", err)
+	}
+	if len(fl.started) != 0 {
+		t.Errorf("expected no spawn when the server is already healthy, launched %v", fl.started)
+	}
+}
 
 // hasFlagValue reports whether args contains flag immediately followed by value.
 func hasFlagValue(args []string, flag, value string) bool {

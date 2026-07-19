@@ -91,6 +91,36 @@ func TestReadStreamNoContentIsError(t *testing.T) {
 	}
 }
 
+// TestReadStreamCountsReasoningTokens covers a thinking model (qwen3, deepseek-r1)
+// that streams its chain of thought in the reasoning channel and emits no plain
+// content within the token budget. Ollama uses "reasoning", vLLM/DeepSeek use
+// "reasoning_content"; both must be timed as generated tokens, else the cell is
+// wrongly skipped as empty.
+func TestReadStreamCountsReasoningTokens(t *testing.T) {
+	sse := "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"reasoning\":\"hmm\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" let\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"reasoning\":\" me\"}}]}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":3}}\n\n" +
+		"data: [DONE]\n\n"
+	clk := fakeClock(time.Unix(0, 0), time.Second)
+	start := clk() // measure() consumes one tick for the request-start stamp
+	s, err := readStream(strings.NewReader(sse), start, clk)
+	if err != nil {
+		t.Fatalf("readStream: %v", err)
+	}
+	if s.genToks != 3 {
+		t.Fatalf("genToks = %d, want 3", s.genToks)
+	}
+	// first reasoning token at T1 -> ttft 1s; last at T3 -> decode 2s.
+	if s.ttft != time.Second {
+		t.Errorf("ttft = %v, want 1s", s.ttft)
+	}
+	if s.decode != 2*time.Second {
+		t.Errorf("decode = %v, want 2s", s.decode)
+	}
+}
+
 func TestMeanStd(t *testing.T) {
 	mean, std := meanStd([]float64{10, 12, 14})
 	if mean != 12 {

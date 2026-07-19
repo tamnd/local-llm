@@ -133,6 +133,14 @@ func readStream(r io.Reader, start time.Time, now func() time.Time) (sample, err
 			Choices []struct {
 				Delta struct {
 					Content string `json:"content"`
+					// Reasoning models (qwen3, deepseek-r1) stream their chain of
+					// thought in a separate channel: vLLM/DeepSeek use
+					// reasoning_content, Ollama uses reasoning. Those tokens cost the
+					// same decode work as content, so the rate must count them or a
+					// thinking model that emits only reasoning within the token
+					// budget reads as "no tokens" and the cell is wrongly skipped.
+					ReasoningContent string `json:"reasoning_content"`
+					Reasoning        string `json:"reasoning"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *struct {
@@ -148,8 +156,12 @@ func readStream(r io.Reader, start time.Time, now func() time.Time) (sample, err
 			s.promptToks = chunk.Usage.PromptTokens
 			s.genToks = chunk.Usage.CompletionTokens
 		}
-		hasContent := len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != ""
-		if hasContent {
+		hasToken := false
+		if len(chunk.Choices) > 0 {
+			d := chunk.Choices[0].Delta
+			hasToken = d.Content != "" || d.ReasoningContent != "" || d.Reasoning != ""
+		}
+		if hasToken {
 			t := now()
 			if !sawContent {
 				firstAt = t
@@ -162,7 +174,7 @@ func readStream(r io.Reader, start time.Time, now func() time.Time) (sample, err
 		return sample{}, fmt.Errorf("read stream: %w", err)
 	}
 	if !sawContent {
-		return sample{}, fmt.Errorf("stream carried no content tokens")
+		return sample{}, fmt.Errorf("stream carried no generated tokens")
 	}
 	s.ttft = firstAt.Sub(start)
 	s.decode = lastAt.Sub(firstAt)

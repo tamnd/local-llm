@@ -142,7 +142,13 @@ func run(args []string) error {
 // a slow decode; only the measured reps feed the mean and standard deviation.
 func benchCell(client *http.Client, base, token, model, prompt string, gen, reps int, timeout time.Duration, now func() time.Time) (result, error) {
 	warmCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	_, err := measure(warmCtx, client, base, token, model, "warm up: reply with one word.", 1, now)
+	// The warm-up only absorbs the cold-load tax, so its token count is
+	// throwaway, but it must not be 1: a thinking model (qwen3) spends its first
+	// token on the <think> open marker, which streams as an empty delta (no
+	// content, no reasoning). A 1-token budget then sees nothing generated and
+	// the whole cell is wrongly skipped, so give it enough headroom to surface a
+	// real token before the length cutoff.
+	_, err := measure(warmCtx, client, base, token, model, "warm up: reply with one word.", 16, now)
 	cancel()
 	if err != nil {
 		return result{}, fmt.Errorf("warm-up: %w", err)

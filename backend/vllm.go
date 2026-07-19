@@ -71,5 +71,12 @@ func buildVLLMArgs(entry config.ModelEntry) []string {
 	if q := paramString(entry.Params, "quantization", "awq"); q != "" {
 		args = append(args, "--quantization", q)
 	}
+	// An fp8 KV cache halves the KV footprint, which is what lets a 4-bit 32B
+	// hold a 32k context on the 24 GB card (a 32k fp16 cache is ~8 GiB and
+	// overflows). Only passed when the model sets it, so fp16-cache models are
+	// unaffected.
+	if kv := paramString(entry.Params, "kv_cache_dtype", ""); kv != "" {
+		args = append(args, "--kv-cache-dtype", kv)
+	}
 	return args
 }

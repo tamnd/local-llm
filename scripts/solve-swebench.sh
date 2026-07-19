@@ -28,6 +28,12 @@
 #   TOKEN      gateway bearer token                  (or LLMBENCH_TOKEN)
 #   MODELS     comma-separated gateway model ids     (required)
 #   SUITE      eval suite name                       (default swebench-live)
+#   TASKS      comma-separated scenario ids to run   (default: the whole suite)
+#              A local 4-bit 32B decodes at tens of tok/s, and an agentic task
+#              burns tens of thousands of tokens across many rounds, so the full
+#              15-task suite times six backends is hours of wall clock. TASKS
+#              narrows the run to a named subset; the harness runs one scenario
+#              per `lab run tomo <id>` when an id is given.
 #   CONFIG     llmgw config, for the runtime label   (default configs/llmgw.yaml)
 #   OUT        output JSONL path                     (default bench/results/solve-<date>.jsonl)
 set -euo pipefail
@@ -71,13 +77,23 @@ for raw in "${MODEL_LIST[@]}"; do
 	runtime="$(runtime_of "$model")"; runtime="${runtime:-unknown}"
 	echo "==== $model (runtime=$runtime) ====" >&2
 
-	# Point the harness at the gateway for this model, then run the suite. The
-	# proxy inside each task container forwards to $GATEWAY; the key is passed
-	# straight through as the bearer token.
+	# Point the harness at the gateway for this model, then run the suite (or the
+	# named TASKS subset). The proxy inside each task container forwards to
+	# $GATEWAY; the key is passed straight through as the bearer token.
 	(
 		cd "$LABS_DIR"
-		LAB_UPSTREAM="$GATEWAY" LAB_MODEL="$model" OPENCODE_API_KEY="$TOKEN" \
-			go run ./cmd/lab run tomo --suite "$SUITE"
+		if [ -n "${TASKS:-}" ]; then
+			IFS=',' read -ra TASK_LIST <<< "$TASKS"
+			for t in "${TASK_LIST[@]}"; do
+				task="$(echo "$t" | xargs)"; [ -n "$task" ] || continue
+				echo "-- $model / $task --" >&2
+				LAB_UPSTREAM="$GATEWAY" LAB_MODEL="$model" OPENCODE_API_KEY="$TOKEN" \
+					go run ./cmd/lab run tomo "$task" --suite "$SUITE"
+			done
+		else
+			LAB_UPSTREAM="$GATEWAY" LAB_MODEL="$model" OPENCODE_API_KEY="$TOKEN" \
+				go run ./cmd/lab run tomo --suite "$SUITE"
+		fi
 	)
 
 	# Snapshot this model's aggregate before the next model's run overwrites the

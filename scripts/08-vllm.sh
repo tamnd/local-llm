@@ -79,8 +79,10 @@ mkdir -p "${VLLM_MODEL_DIR}"
 # network-online.target so Tailscale is up before the gateway starts.
 #
 # Port assignments (matching configs/llmgw.yaml):
-#   8100 - qwen3-14b-fp8  -> Qwen/Qwen3-14B-FP8 (FP8 quant, 15.21 GiB, fits in 24 GB)
-#   8101 - gpt-oss-20b    -> openai/gpt-oss-20b (native MXFP4 MoE, 12.8 GiB)
+#   8100 - qwen3-14b-fp8      -> Qwen/Qwen3-14B-FP8 (FP8 quant, 15.21 GiB, fits in 24 GB)
+#   8101 - gpt-oss-20b        -> openai/gpt-oss-20b (native MXFP4 MoE, 12.8 GiB)
+#   8102 - qwen3-32b-awq      -> Qwen/Qwen3-32B-AWQ (AWQ int4, ~19 GiB, dense bench arm)
+#   8103 - qwen3-30b-a3b-awq  -> QuixiAI/Qwen3-30B-A3B-AWQ (AWQ int4, ~17 GiB, MoE bench arm)
 #
 # Only one model can run at a time on a single 24 GB GPU. The gateway uses
 # hot_swap to unload the active model before loading the next one.
@@ -158,10 +160,21 @@ UNIT
 write_unit "qwen3-14b-fp8" "${VLLM_MODEL_DIR}/Qwen3-14B-FP8" 8100 "0.85" "--max-model-len 16384"
 write_unit "gpt-oss-20b"   "${VLLM_MODEL_DIR}/gpt-oss-20b"   8101 "0.92" "--kv-cache-dtype fp8 --max-model-len 8192"
 
+# The 4-bit bench arms (spec doc 19). Both are AWQ int4, served with the Marlin
+# kernel (--quantization awq_marlin) that vLLM 0.23 uses on Ada (sm_89). A 32B at
+# int4 is ~19 GiB of weights, so 0.90 utilization leaves room for a 32k KV cache;
+# the MoE has the same footprint with far fewer active params, so it decodes
+# faster at the same VRAM. Only one runs at a time (24 GB card), gateway hot_swap
+# unloads the active model before loading the next.
+write_unit "qwen3-32b-awq"     "${VLLM_MODEL_DIR}/Qwen3-32B-AWQ"     8102 "0.90" "--quantization awq_marlin --max-model-len 32768"
+write_unit "qwen3-30b-a3b-awq" "${VLLM_MODEL_DIR}/Qwen3-30B-A3B-AWQ" 8103 "0.90" "--quantization awq_marlin --max-model-len 32768"
+
 systemctl daemon-reload
 echo ""
 echo "Units written. Download weights first (see comment block above write_unit), then:"
 echo "  systemctl start vllm-qwen3-14b-fp8"
 echo "  systemctl start vllm-gpt-oss-20b"
+echo "  systemctl start vllm-qwen3-32b-awq       # dense 4-bit bench arm"
+echo "  systemctl start vllm-qwen3-30b-a3b-awq   # MoE 4-bit bench arm"
 echo ""
 echo "Then edit configs/llmgw.yaml and uncomment the vllm entries."

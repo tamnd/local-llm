@@ -55,8 +55,8 @@ vllm:
       source: "hf:Qwen/Qwen3-32B-AWQ"
       note: "dense 32B AWQ int4; vLLM arm of the dense bench grid, --quantization awq_marlin"
     - dir: "Qwen3-30B-A3B-AWQ"
-      source: "hf:Qwen/Qwen3-30B-A3B-AWQ"
-      note: "MoE 30B-A3B AWQ int4; vLLM arm of the MoE bench grid, --quantization awq_marlin"
+      source: "hf:QuixiAI/Qwen3-30B-A3B-AWQ"
+      note: "MoE 30B-A3B AWQ int4; vLLM arm of the MoE bench grid, --quantization awq_marlin. Qwen ships no public AWQ for the base MoE, so this community quant of the same base is the fair match to the GGUF and EXL3 arms."
 
 # inproc loads a GGUF directly into the gateway process via the in-process cgo
 # engine (the zero-proxy high-throughput path, spec 2065 docs 15 to 17). file is

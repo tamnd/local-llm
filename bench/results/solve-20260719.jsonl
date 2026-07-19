@@ -1,0 +1,2 @@
+{"date":"20260719","model":"qwen3-30b-a3b","runtime":"ollama","suite":"swebench-live","task":"cyclotruc__gitingest-94","result":"pass","tokens":18668,"rounds":4,"ttfb_ms":539}
+{"date":"20260719","model":"qwen3-32b","runtime":"ollama","suite":"swebench-live","task":"cyclotruc__gitingest-94","result":"pass","tokens":18096,"rounds":6,"ttfb_ms":2857}

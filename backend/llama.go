@@ -27,6 +27,16 @@ func (l *Llama) ID() string { return config.BackendLlama }
 // "bin" param; the rest of the flags are assembled from params with the
 // doc 14 section 2.2 defaults.
 func (l *Llama) Load(ctx context.Context, entry config.ModelEntry) error {
+	// Adopt an already-serving llama-server instead of spawning one. The process
+	// is the resident model, so a healthy endpoint at the configured port is the
+	// model this entry wants. This is the path used when llama-server runs as an
+	// externally managed service and, on the RTX 4090 box, when it runs in WSL2
+	// while the gateway runs on the Windows host and so cannot exec the Linux
+	// binary itself: the gateway reaches the WSL server over localhostForwarding
+	// and just proxies to it. Same reasoning as VLLM.Load.
+	if l.Healthy(ctx, entry) == nil {
+		return nil
+	}
 	bin := paramString(entry.Params, "bin", "")
 	args := buildLlamaArgs(entry)
 	ready := func(c context.Context) error { return l.Healthy(c, entry) }
@@ -71,6 +81,22 @@ func buildLlamaArgs(entry config.ModelEntry) []string {
 		"--cache-type-k", paramString(entry.Params, "cache_type_k", "q8_0"),
 		"--cache-type-v", paramString(entry.Params, "cache_type_v", "q8_0"),
 	)
+	// Speculative decoding. A vocab-matched draft GGUF (for Muse Glimmer, Meta's
+	// DFlash head) lets llama-server verify several drafted tokens per target
+	// forward pass, which is a decode-side win on memory-bandwidth-bound models
+	// and a no-op when the draft mispredicts. Only emitted when a draft is
+	// configured, so single-model entries keep the exact flag set they had.
+	// The flag names are the current spelling: --draft-max and --draft-min were
+	// removed upstream in favour of --spec-draft-n-max and --spec-draft-n-min,
+	// and llama-server exits on the old ones rather than warning.
+	if draft := paramString(entry.Params, "draft_path", ""); draft != "" {
+		args = append(args,
+			"--spec-draft-model", draft,
+			"--spec-draft-ngl", strconv.Itoa(paramInt(entry.Params, "gpu_layers_draft", 99)),
+			"--spec-draft-n-max", strconv.Itoa(paramInt(entry.Params, "draft_max", 6)),
+			"--spec-draft-n-min", strconv.Itoa(paramInt(entry.Params, "draft_min", 1)),
+		)
+	}
 	return args
 }
 

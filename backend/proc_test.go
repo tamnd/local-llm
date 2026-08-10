@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -84,5 +86,63 @@ func TestLlamaArgsFromParams(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q; got %s", want, joined)
 		}
+	}
+	// No draft configured means no speculative flags at all.
+	if strings.Contains(joined, "--model-draft") {
+		t.Errorf("draft flags emitted without params.draft_path; got %s", joined)
+	}
+}
+
+// TestLlamaArgsDraft covers the speculative-decoding path: a configured
+// draft_path emits --model-draft plus its tuning flags, with draft_max and
+// draft_min overridable per model (Muse Glimmer's DFlash head).
+func TestLlamaArgsDraft(t *testing.T) {
+	entry := config.ModelEntry{
+		BaseURL: "http://127.0.0.1:8080", UpstreamModel: "/models/muse.gguf",
+		Params: map[string]any{
+			"draft_path": "/models/dflash.gguf",
+			"draft_max":  8,
+		},
+	}
+	args := buildLlamaArgs(entry)
+	if !hasFlagValue(args, "--spec-draft-model", "/models/dflash.gguf") {
+		t.Errorf("missing --spec-draft-model; got %v", args)
+	}
+	if !hasFlagValue(args, "--spec-draft-n-max", "8") {
+		t.Errorf("draft_max override not applied; got %v", args)
+	}
+	// Unset draft knobs fall back to the documented defaults.
+	if !hasFlagValue(args, "--spec-draft-n-min", "1") || !hasFlagValue(args, "--spec-draft-ngl", "99") {
+		t.Errorf("draft defaults missing; got %v", args)
+	}
+	// The removed spellings must never be emitted: llama-server exits on them.
+	for _, dead := range []string{"--draft-max", "--draft-min"} {
+		if hasFlag(args, dead) {
+			t.Errorf("emitted removed flag %s; got %v", dead, args)
+		}
+	}
+}
+
+// TestLlamaLoadAdoptsHealthyServer covers the WSL2 path: when llama-server is
+// already answering /health at base_url, Load adopts it rather than trying to
+// exec a Linux binary from the Windows-host gateway.
+func TestLlamaLoadAdoptsHealthyServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	fl := &fakeLauncher{}
+	l := &Llama{proxy: newProxy("test"), procs: &procTable{launcher: fl}}
+	entry := config.ModelEntry{BaseURL: srv.URL, UpstreamModel: "/models/muse.gguf"}
+	if err := l.Load(context.Background(), entry); err != nil {
+		t.Fatalf("Load of a healthy server should succeed by adoption, got %v", err)
+	}
+	if len(fl.started) != 0 {
+		t.Errorf("expected no spawn when the server is already healthy, launched %v", fl.started)
 	}
 }

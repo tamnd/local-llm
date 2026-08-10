@@ -83,6 +83,14 @@ matter depend on the backend. The ones used in the shipped config and catalog:
 | `tabby` | `admin_key` | TabbyAPI admin key. |
 | `tabby` | `max_seq_len` | Maximum sequence length TabbyAPI loads the model with. |
 | `tabby` | `cache_mode` | KV-cache quantization mode, for example `Q8`. |
+| `llama` | `bin` | Path to the `llama-server` binary the gateway execs. |
+| `llama` | `n_ctx` | Context length. Default 32768. |
+| `llama` | `n_gpu_layers` | Layers offloaded to the GPU. Default 999 (all). |
+| `llama` | `flash_attn` | Enable flash attention. Default true. |
+| `llama` | `cache_type_k` / `cache_type_v` | KV-cache type, for example `q8_0`. |
+| `llama` | `draft_path` | Optional vocab-matched draft GGUF for speculative decoding. Emits `--spec-draft-*` flags. |
+| `llama` | `gpu_layers_draft` | Draft-model layers on the GPU. Default 99. |
+| `llama` | `draft_max` / `draft_min` | Draft tokens proposed per step. Defaults 6 and 1. |
 | `vllm` | `gpu_memory_utilization` | Fraction of GPU memory vLLM may allocate, e.g. `"0.85"`. |
 | `vllm` | `max_model_len` | Maximum context length in tokens, e.g. `"16384"`. |
 | `vllm` | `kv_cache_dtype` | KV-cache quantization, e.g. `"fp8"`. Default is `"auto"`. |

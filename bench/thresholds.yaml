@@ -25,6 +25,12 @@ models:
     ttft_ms_max: 700
     swap_s_max: 20
 
+  muse-glimmer-30b:
+    backend: llama
+    decode_tok_s_min: 40     # measured 46.6-50.8 across 512-32K, floor leaves margin
+    ttft_ms_max: 900         # measured 448 ms at 512 tokens of prompt
+    swap_s_max: 45           # 24 s cold load off the WSL ext4 disk, 4 s warm
+
   qwen3-32b-exl2:
     backend: tabby
     decode_tok_s_min: 40     # measured ~47-48 at 4bpw

@@ -41,6 +41,18 @@ llama:
     - file: "Qwen3-14B-Q6_K.gguf"
       source: "hf:Qwen/Qwen3-14B-GGUF"
       note: "example dense GGUF for the llama-server backend"
+    # Muse Glimmer is provisioned by scripts/10-llamacpp-muse.sh, which builds
+    # llama.cpp from master (the arch is newer than every tagged win-cuda build)
+    # and stages these onto the WSL2 ext4 disk at /root/models/gguf.
+    - file: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf"
+      source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
+      note: "Meta Muse Glimmer 30B, dynamic 4-bit, 14.8 GiB; serves muse-glimmer-30b"
+    - file: "dflash-kquant.gguf"
+      source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
+      note: "Meta's DFlash draft head for speculative decoding; serves muse-glimmer-30b-dflash"
+    - file: "mmproj-kquant.gguf"
+      source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
+      note: "Muse Glimmer vision projector; staged for image input, needs llama-server --mmproj"
 
 # vLLM loads from a local AWQ/GPTQ checkout or an HF id. Process-driven backend;
 # slow to start, fast to serve. dir is the local checkout the gateway config's

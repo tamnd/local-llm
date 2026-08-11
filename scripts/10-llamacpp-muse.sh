@@ -75,15 +75,59 @@ for f in "$MODEL" "$DRAFT" "$MMPROJ"; do
 done
 ls -la "$MODELS"
 
+# A systemd unit, the same way 08-vllm.sh runs the vLLM arms. The distro boots
+# systemd as PID 1, so a unit is what survives: a backgrounded server dies with
+# the session that launched it, and the gateway then fails the request rather
+# than adopting anything (it runs on the Windows host and cannot exec this
+# binary). --host 0.0.0.0 so the gateway reaches it over localhostForwarding.
+cat > /etc/systemd/system/llama-muse-glimmer.service <<UNIT
+[Unit]
+Description=llama-server serving Muse Glimmer 30B on port 8080
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CUDA_VISIBLE_DEVICES=0
+Environment="PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+KillMode=control-group
+ExecStart=$SRC/build/bin/llama-server \\
+    --model $MODELS/$MODEL \\
+    --host 0.0.0.0 \\
+    --port 8080 \\
+    --n-gpu-layers 999 \\
+    --ctx-size 32768 \\
+    --flash-attn on \\
+    --cache-type-k q8_0 \\
+    --cache-type-v q8_0 \\
+    --no-webui \\
+    --metrics
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llama-muse-glimmer
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+echo "wrote /etc/systemd/system/llama-muse-glimmer.service"
+
 cat <<EOF
 
 Done. Start the server the gateway's muse-glimmer-30b entry adopts:
 
-  $SRC/build/bin/llama-server --model $MODELS/$MODEL \\
-    --host 0.0.0.0 --port 8080 --n-gpu-layers 999 --ctx-size 32768 \\
-    --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0
+  systemctl enable --now llama-muse-glimmer
 
-Append the DFlash flags for the muse-glimmer-30b-dflash entry:
+Windows does not start WSL at boot, and wsl.exe needs a logon session, so a
+scheduled task under S4U cannot bring the distro up. Register the boot task
+with Interactive logon and an At-LogOn trigger, as OllamaServe already is, or
+on a headless box start the distro from the first SSH session:
+
+  wsl -d Ubuntu -u root -e /bin/systemctl is-system-running --wait
+
+For the DFlash arm (currently a no-op, see configs/llmgw.yaml), append:
 
   --spec-draft-model $MODELS/$DRAFT --spec-draft-ngl 99 --spec-draft-n-max 6 --spec-draft-n-min 1
 EOF

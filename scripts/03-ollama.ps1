@@ -1,9 +1,14 @@
-# 03-ollama.ps1: install Ollama 0.30.6 and run it as the OllamaServe scheduled
+# 03-ollama.ps1: install Ollama 0.32.7 and run it as the OllamaServe scheduled
 # task on loopback, with flash attention and q8 KV cache enabled (spec doc 10
 # section 6). Loopback-only: the gateway is the single tailnet-facing service.
+#
+# 0.32.7 is the first release to carry Muse Glimmer, but only through the MLX
+# engine on Apple Silicon; on this CUDA box the registry's GGUF tags still 412.
+# Muse Glimmer is therefore served by llama-server (10-llamacpp-muse.sh), and
+# this pin is here so the rest of the roster runs on a current runtime.
 . "$PSScriptRoot\common.ps1"
 
-$required = "0.30.6"
+$required = "0.32.7"
 $ollamaPath = "C:\Users\gopher\AppData\Local\Programs\Ollama\ollama.exe"
 
 if (Test-Path $ollamaPath) {

@@ -91,6 +91,38 @@ func TestLlamaArgsFromParams(t *testing.T) {
 	if strings.Contains(joined, "--model-draft") {
 		t.Errorf("draft flags emitted without params.draft_path; got %s", joined)
 	}
+	// Likewise for the optional multimodal and sampling knobs: a text-only entry
+	// must produce the same command line it did before those were wired up.
+	for _, dead := range []string{"--mmproj", "--temp", "--top-p", "--top-k"} {
+		if strings.Contains(joined, dead) {
+			t.Errorf("emitted %s for an entry that does not set it; got %s", dead, joined)
+		}
+	}
+}
+
+// TestLlamaArgsVisionAndSampling covers the Unsloth Muse Glimmer recipe: the
+// vision projector plus the model card's sampling defaults. The sampling values
+// have to survive YAML decoding whether or not the operator quoted them, which
+// is why 1.0 arrives here as a float64 and 64 as an int.
+func TestLlamaArgsVisionAndSampling(t *testing.T) {
+	entry := config.ModelEntry{
+		BaseURL: "http://127.0.0.1:8080", UpstreamModel: "/models/muse.gguf",
+		Params: map[string]any{
+			"mmproj_path": "/models/mmproj-BF16.gguf",
+			"temp":        1.0,
+			"top_p":       "0.95",
+			"top_k":       64,
+		},
+	}
+	args := buildLlamaArgs(entry)
+	if !hasFlagValue(args, "--mmproj", "/models/mmproj-BF16.gguf") {
+		t.Errorf("missing --mmproj; got %v", args)
+	}
+	for _, want := range [][2]string{{"--temp", "1"}, {"--top-p", "0.95"}, {"--top-k", "64"}} {
+		if !hasFlagValue(args, want[0], want[1]) {
+			t.Errorf("missing %s %s; got %v", want[0], want[1], args)
+		}
+	}
 }
 
 // TestLlamaArgsDraft covers the speculative-decoding path: a configured

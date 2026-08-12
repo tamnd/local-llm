@@ -27,9 +27,11 @@ models:
 
   muse-glimmer-30b:
     backend: llama
-    decode_tok_s_min: 40     # measured 46.6-50.8 across 512-32K, floor leaves margin
-    ttft_ms_max: 900         # measured 448 ms at 512 tokens of prompt
-    swap_s_max: 45           # 24 s cold load off the WSL ext4 disk, 4 s warm
+    decode_tok_s_min: 40     # measured 46.6-51.2 across 512-32K, floor leaves margin
+    ttft_ms_max: 900         # measured 359 ms at 512 tokens of prompt
+    # The projector adds 1.4 GiB to read at load. Cold load was 24 s off the WSL
+    # ext4 disk text-only and 4 s warm; the floor keeps the same headroom over it.
+    swap_s_max: 55
 
   qwen3-32b-exl2:
     backend: tabby

@@ -88,6 +88,8 @@ matter depend on the backend. The ones used in the shipped config and catalog:
 | `llama` | `n_gpu_layers` | Layers offloaded to the GPU. Default 999 (all). |
 | `llama` | `flash_attn` | Enable flash attention. Default true. |
 | `llama` | `cache_type_k` / `cache_type_v` | KV-cache type, for example `q8_0`. |
+| `llama` | `mmproj_path` | Optional vision projector GGUF. Emits `--mmproj`; without it a multimodal model serves text only and silently ignores images. |
+| `llama` | `temp` / `top_p` / `top_k` | Optional sampling defaults. Emitted only when set, so the server's own defaults otherwise apply. |
 | `llama` | `draft_path` | Optional vocab-matched draft GGUF for speculative decoding. Emits `--spec-draft-*` flags. |
 | `llama` | `gpu_layers_draft` | Draft-model layers on the GPU. Default 99. |
 | `llama` | `draft_max` / `draft_min` | Draft tokens proposed per step. Defaults 6 and 1. |

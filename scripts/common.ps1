@@ -40,15 +40,31 @@ function Test-HttpOk($url, $timeoutSec = 5) {
 # as gopher with highest privilege. cmdLine is the full cmd.exe argument string.
 # This is the one place the task shape is defined, so OllamaServe, TabbyServe,
 # and GatewayServe stay identical except for their command.
-function Register-Service($name, $cmdLine) {
+#
+# An Interactive principal cannot start at boot: it needs a window station, so
+# the AtStartup trigger silently does nothing and the service only comes up when
+# gopher logs in. That is why this box's services have historically been absent
+# after an unattended reboot. -AsSystem registers the task under SYSTEM with a
+# ServiceAccount logon instead, which runs in session 0 and does fire at boot.
+# It is opt-in because SYSTEM has a different profile: anything reading
+# %USERPROFILE%, a per-user venv, or a per-user model directory has to be given
+# those paths explicitly in cmdLine. Callers that have not been checked against
+# that keep the interactive shape, with AtLogOn added so the trigger they
+# actually rely on is declared rather than implied.
+function Register-Service($name, $cmdLine, [switch]$AsSystem) {
     $existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
     if ($existing) {
         Unregister-ScheduledTask -TaskName $name -Confirm:$false
         Log "Removed stale $name task."
     }
     $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $cmdLine
-    $trigger = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId "gopher" -LogonType Interactive -RunLevel Highest
+    if ($AsSystem) {
+        $trigger = New-ScheduledTaskTrigger -AtStartup
+        $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    } else {
+        $trigger = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn -User "gopher"))
+        $principal = New-ScheduledTaskPrincipal -UserId "gopher" -LogonType Interactive -RunLevel Highest
+    }
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartInterval (New-TimeSpan -Minutes 1) -RestartCount 3
     Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
     Log "$name scheduled task registered."

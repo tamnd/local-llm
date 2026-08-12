@@ -57,9 +57,11 @@ type chatRequest struct {
 	StreamOpts  streamOptions `json:"stream_options"`
 }
 
+// chatMessage carries either a plain string (text-only cells) or the OpenAI
+// content-part array a vision cell needs, so one request type covers both modes.
 type chatMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 type streamOptions struct {
@@ -71,9 +73,17 @@ type streamOptions struct {
 // surfaced with the body so an OOM (503) or unreachable backend (502) reads
 // clearly in the run log.
 func measure(ctx context.Context, client *http.Client, base, token, model, prompt string, genToks int, now func() time.Time) (sample, error) {
+	return measureContent(ctx, client, base, token, model, prompt, genToks, now)
+}
+
+// measureContent is measure's general form: content is either a string or a
+// []contentPart carrying images. Vision cells go through here so the image
+// encode cost lands inside TTFT exactly as a text prefill does, which is what
+// makes the two modes comparable in the same schema.
+func measureContent(ctx context.Context, client *http.Client, base, token, model string, content any, genToks int, now func() time.Time) (sample, error) {
 	body := chatRequest{
 		Model:       model,
-		Messages:    []chatMessage{{Role: "user", Content: prompt}},
+		Messages:    []chatMessage{{Role: "user", Content: content}},
 		MaxTokens:   genToks,
 		Temperature: 0,
 		Stream:      true,

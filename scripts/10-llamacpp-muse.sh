@@ -3,6 +3,13 @@
 # stage the Muse Glimmer GGUF set, so the gateway's muse-glimmer-30b entry has a
 # server to adopt.
 #
+# The served configuration follows Unsloth's own run page for this model
+# (https://unsloth.ai/docs/models/muse-glimmer): the UD-Q4_K_XL dynamic quant,
+# temp 1.0 / top-p 0.95 / top-k 64, and the BF16 mmproj projector so the server
+# accepts image input. Those sampling values are server defaults; a client that
+# sends its own temperature still overrides them, which is what the bench does
+# to keep its numbers comparable across runs.
+#
 # Why master and not a tagged release: llama.cpp merged the muse-glimmer
 # architecture in 62bf73d2 (PR #26841). The prebuilt win-cuda release binaries
 # lag master by several hours, and every tag up to b10344 still fails the model
@@ -21,12 +28,20 @@ WIN_STAGE="${WIN_STAGE:-/mnt/c/models/gguf}"
 CUDA_ARCH="${CUDA_ARCH:-89}"   # Ada / RTX 4090 is sm_89
 REPO="https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main"
 
-# The weights: the dynamic 4-bit quant, Meta's DFlash draft head for speculative
-# decoding, and the vision projector. mmproj is staged but not yet wired into a
-# gateway entry; llama-server needs --mmproj to accept image input.
+# The weights: the dynamic 4-bit quant Unsloth recommends as the starting point
+# (https://unsloth.ai/docs/models/muse-glimmer), Meta's DFlash draft head for
+# speculative decoding, and the vision projector.
+#
+# MMPROJ is the BF16 projector the Unsloth page names, not the kquant one an
+# earlier revision of this script reached for: the repo has no bare
+# "mmproj-kquant.gguf" at the path this script builds, so that fetch 404'd and,
+# because curl ran without -f, wrote the HTML error body to the target and
+# exited 0. The projector was silently absent and the model served text-only.
+# Every fetch below now uses -f so a bad name fails the run instead of staging
+# a 500-byte "GGUF".
 MODEL="Muse-Glimmer-30B-UD-Q4_K_XL.gguf"
 DRAFT="dflash-kquant.gguf"
-MMPROJ="mmproj-kquant.gguf"
+MMPROJ="mmproj-Muse-Glimmer-30B-BF16.gguf"
 
 export PATH=/usr/local/cuda/bin:$PATH
 command -v nvcc >/dev/null || { echo "nvcc not on PATH; is the CUDA toolkit installed in WSL?" >&2; exit 1; }
@@ -54,7 +69,7 @@ cmake -B build \
     -DLLAMA_BUILD_TESTS=OFF \
     -DLLAMA_BUILD_EXAMPLES=OFF
 cmake --build build --config Release -j "$(nproc)" \
-    --target llama-server llama-cli llama-bench
+    --target llama-server llama-cli llama-bench llama-mtmd-cli
 "$SRC/build/bin/llama-server" --version
 
 # Weights live on the WSL ext4 disk, not /mnt/c: the 9p hop off the Windows
@@ -70,7 +85,7 @@ for f in "$MODEL" "$DRAFT" "$MMPROJ"; do
         cp "$WIN_STAGE/$f" "$MODELS/$f"
     else
         echo "downloading $f"
-        curl -sSL --retry 3 -o "$MODELS/$f" "$REPO/$f"
+        curl -fsSL --retry 3 -o "$MODELS/$f" "$REPO/$f"
     fi
 done
 ls -la "$MODELS"
@@ -93,6 +108,7 @@ Environment="PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/
 KillMode=control-group
 ExecStart=$SRC/build/bin/llama-server \\
     --model $MODELS/$MODEL \\
+    --mmproj $MODELS/$MMPROJ \\
     --host 0.0.0.0 \\
     --port 8080 \\
     --n-gpu-layers 999 \\
@@ -100,6 +116,9 @@ ExecStart=$SRC/build/bin/llama-server \\
     --flash-attn on \\
     --cache-type-k q8_0 \\
     --cache-type-v q8_0 \\
+    --temp 1.0 \\
+    --top-p 0.95 \\
+    --top-k 64 \\
     --no-webui \\
     --metrics
 Restart=on-failure

@@ -81,6 +81,29 @@ func buildLlamaArgs(entry config.ModelEntry) []string {
 		"--cache-type-k", paramString(entry.Params, "cache_type_k", "q8_0"),
 		"--cache-type-v", paramString(entry.Params, "cache_type_v", "q8_0"),
 	)
+	// Vision. A multimodal GGUF carries its projector in a separate file, and
+	// llama-server serves the model text-only when --mmproj is absent: the image
+	// parts of a request are dropped and the completion comes back describing
+	// nothing, with no error anywhere. Emitted only when configured, so the
+	// text-only entries keep the exact flag set they had.
+	if mmproj := paramString(entry.Params, "mmproj_path", ""); mmproj != "" {
+		args = append(args, "--mmproj", mmproj)
+	}
+	// Sampling. llama-server's built-in defaults are not every model's
+	// recommended ones (Muse Glimmer wants temp 1.0 / top-p 0.95 / top-k 64 per
+	// Unsloth's model card), and a mismatch here shows up as quality drift
+	// rather than an error, so each is emitted only when a model pins it.
+	for _, s := range []struct {
+		key, flag string
+	}{
+		{"temp", "--temp"},
+		{"top_p", "--top-p"},
+		{"top_k", "--top-k"},
+	} {
+		if v := paramNumString(entry.Params, s.key); v != "" {
+			args = append(args, s.flag, v)
+		}
+	}
 	// Speculative decoding. A vocab-matched draft GGUF (for Muse Glimmer, Meta's
 	// DFlash head) lets llama-server verify several drafted tokens per target
 	// forward pass, which is a decode-side win on memory-bandwidth-bound models
@@ -108,6 +131,28 @@ func portFromURL(base string) string {
 		return ""
 	}
 	return u.Port()
+}
+
+// paramNumString renders a numeric knob as the string its flag takes, and ""
+// when the key is absent. It accepts the number unquoted as well as quoted:
+// YAML decodes `temp: 1.0` to a float64, which paramString would drop on the
+// floor, and a sampling flag that silently goes missing is the kind of bug that
+// only shows up as worse output weeks later.
+func paramNumString(params map[string]any, key string) string {
+	if params == nil {
+		return ""
+	}
+	switch v := params[key].(type) {
+	case string:
+		return v
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	}
+	return ""
 }
 
 func paramInt(params map[string]any, key string, def int) int {

@@ -50,9 +50,12 @@ llama:
     - file: "dflash-kquant.gguf"
       source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
       note: "Meta's DFlash draft head for speculative decoding; serves muse-glimmer-30b-dflash"
-    - file: "mmproj-kquant.gguf"
+    # The projector is published at BF16 only; there is no mmproj-kquant.gguf in
+    # the repo, and the earlier name here 404'd silently because the fetch was
+    # not using curl -f. It is 1.4 GiB and costs ~3.9 GB resident.
+    - file: "mmproj-Muse-Glimmer-30B-BF16.gguf"
       source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
-      note: "Muse Glimmer vision projector; staged for image input, needs llama-server --mmproj"
+      note: "Muse Glimmer vision projector; required for image input, needs llama-server --mmproj"
 
 # vLLM loads from a local AWQ/GPTQ checkout or an HF id. Process-driven backend;
 # slow to start, fast to serve. dir is the local checkout the gateway config's

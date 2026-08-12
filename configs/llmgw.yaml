@@ -98,8 +98,15 @@ models:
   # Meta's Muse Glimmer 30B, the first Meta Superintelligence Labs open release:
   # multimodal (text + image), 128K context, Apache-2.0, built for always-on
   # local agent workflows. Unsloth's UD-Q4_K_XL dynamic quant is 14.8 GiB on
-  # disk and holds ~15.5 GB resident with a 32K q8_0 KV cache, so it is the
-  # roomiest 30B-class entry on the card.
+  # disk and holds ~19.0 GB resident with a 32K q8_0 KV cache and the vision
+  # projector loaded, rising to ~21 GB once the first image is encoded and the
+  # mtmd buffers are allocated. Text-only (no --mmproj) it is 15.1 GB.
+  #
+  # The flags follow Unsloth's model card: the BF16 projector for image input
+  # and temp 1.0 / top-p 0.95 / top-k 64 for sampling. The projector is what
+  # makes this entry multimodal at all -- without --mmproj llama-server drops
+  # the image parts of a request and answers from the text alone, with no error
+  # on either side, so an image-blind server looks exactly like a working one.
   #
   # It runs on llama-server, not Ollama: as of Ollama 0.32.7 Muse Glimmer is
   # served only by the MLX engine on Apple Silicon (the registry's GGUF tags
@@ -112,7 +119,7 @@ models:
     backend: llama
     base_url: "http://127.0.0.1:8080"
     upstream_model: "/root/models/gguf/Muse-Glimmer-30B-UD-Q4_K_XL.gguf"
-    vram_mb: 16000
+    vram_mb: 21000
     params:
       bin: "/root/llama.cpp/build/bin/llama-server"
       quant: "gguf-ud-q4_k_xl"
@@ -121,6 +128,10 @@ models:
       flash_attn: true
       cache_type_k: "q8_0"
       cache_type_v: "q8_0"
+      mmproj_path: "/root/models/gguf/mmproj-Muse-Glimmer-30B-BF16.gguf"
+      temp: 1.0
+      top_p: 0.95
+      top_k: 64
 
   # The same weights with Meta's DFlash draft head attached for speculative
   # decoding. Commented out because it currently buys nothing on this box, the
@@ -130,7 +141,9 @@ models:
   # it never becomes resident (VRAM 15491 MB with the draft vs 15487 MB without,
   # a 4 MB delta on a 1.5 GiB head) and decode does not move: 49.8 / 49.9 / 48.5
   # / 46.8 tok/s across the 512-32K sweep against 50.8 / 50.5 / 49.2 / 46.6
-  # without it, i.e. inside run-to-run noise. The server explains why at load:
+  # without it, i.e. inside run-to-run noise. Re-tested on b10380 (2026-08-12):
+  # unchanged, 50.9 tok/s at 512 and 47.0 at 32K against 51.2 / 46.6 without,
+  # same log line, same 19469 MB. The server explains why at load:
   #
   #   llama_init_from_model: failed to initialize the context: dflash requires
   #   ctx_other to be set
@@ -145,7 +158,7 @@ models:
   #   backend: llama
   #   base_url: "http://127.0.0.1:8080"
   #   upstream_model: "/root/models/gguf/Muse-Glimmer-30B-UD-Q4_K_XL.gguf"
-  #   vram_mb: 17600
+  #   vram_mb: 22600
   #   params:
   #     bin: "/root/llama.cpp/build/bin/llama-server"
   #     quant: "gguf-ud-q4_k_xl"
@@ -154,6 +167,10 @@ models:
   #     flash_attn: true
   #     cache_type_k: "q8_0"
   #     cache_type_v: "q8_0"
+  #     mmproj_path: "/root/models/gguf/mmproj-Muse-Glimmer-30B-BF16.gguf"
+  #     temp: 1.0
+  #     top_p: 0.95
+  #     top_k: 64
   #     draft_path: "/root/models/gguf/dflash-kquant.gguf"
   #     gpu_layers_draft: 99
   #     draft_max: 6

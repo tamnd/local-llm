@@ -112,9 +112,17 @@ models:
   # served only by the MLX engine on Apple Silicon (the registry's GGUF tags
   # 412 on a CUDA host), while llama.cpp merged the architecture in 62bf73d2.
   # That commit is newer than every tagged win-cuda release, so the box builds
-  # llama.cpp from master in WSL2 (scripts/10-llamacpp-muse.sh) and the gateway
-  # adopts the already-healthy server over localhostForwarding, exactly as it
-  # does for vLLM.
+  # llama.cpp from master in WSL2 and the gateway adopts the already-healthy
+  # server over localhostForwarding, exactly as it does for vLLM.
+  #
+  # NOT AUTOSTARTED. scripts/10-llamacpp-muse.sh, which wrote and enabled the
+  # llama-muse-glimmer unit, has been removed along with the unit itself: an
+  # enabled unit here starts on every WSL boot and takes most of the 24 GB card
+  # out from under whatever else is being measured, which is exactly what it did
+  # during the Qwen3.8 bring-up. The weights are still staged at the path below
+  # and scripts/11-llamacpp-qwen38.sh builds the same shared llama.cpp checkout,
+  # so serving this again is one llama-server invocation on port 8080 -- but it
+  # is now a deliberate act rather than a boot-time default.
   muse-glimmer-30b:
     backend: llama
     base_url: "http://127.0.0.1:8080"
@@ -132,6 +140,45 @@ models:
       temp: 1.0
       top_p: 0.95
       top_k: 64
+
+  # Qwen3.8-27B, Unsloth's UD-Q4_K_XL dynamic quant, through llama-server on port
+  # 8083 (provisioned by scripts/11-llamacpp-qwen38.sh). Native vision-language,
+  # so the BF16 projector is wired the same way Muse Glimmer's is.
+  #
+  # This is the one 27B-class model on the roster that fits the 4090 with room to
+  # spare: 19.3 GB resident at 32K context with the projector loaded. The reason
+  # is the architecture, not the quant. Qwen3.8 is hybrid-attention -- a
+  # full_attention_interval of 4 over 64 layers means only 16 layers keep a
+  # growing KV cache (~16 KiB/token at q8_0); the other 48 are Gated DeltaNet
+  # linear-attention layers holding a fixed-size recurrent state (~150 MiB per
+  # sequence, flat in context length). Context is nearly free here in a way it is
+  # not on any dense entry above, which is why 32K costs what 8K costs.
+  #
+  # Sampling is the model card's Thinking preset (temp 1.0, top-p 0.95, top-k 20,
+  # repeat-penalty 1.0). repeat_penalty is pinned rather than left off because
+  # llama.cpp defaults it to 1.1 -- see the note in backend/llama.go.
+  #
+  # Reasoning effort is a chat-template knob, not a flag: pass
+  # chat_template_kwargs.reasoning_effort (xhigh default, medium, low) per
+  # request. The measured cost of that dial is in bench/README.md.
+  qwen3.8-27b:
+    backend: llama
+    base_url: "http://127.0.0.1:8083"
+    upstream_model: "/root/models/gguf/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+    vram_mb: 20000
+    params:
+      bin: "/root/llama.cpp/build/bin/llama-server"
+      quant: "gguf-ud-q4_k_xl"
+      n_ctx: 32768
+      n_gpu_layers: 999
+      flash_attn: true
+      cache_type_k: "q8_0"
+      cache_type_v: "q8_0"
+      mmproj_path: "/root/models/gguf/mmproj-Qwen3.8-27B-BF16.gguf"
+      temp: 1.0
+      top_p: 0.95
+      top_k: 20
+      repeat_penalty: 1.0
 
   # The same weights with Meta's DFlash draft head attached for speculative
   # decoding. Commented out because it currently buys nothing on this box, the
@@ -176,33 +223,11 @@ models:
   #     draft_max: 6
   #     draft_min: 1
 
-  # Dense 32B, AWQ int4 through vLLM. Port 8102 (see scripts/08-vllm.sh).
-  qwen3-32b-awq:
-    backend: vllm
-    base_url: "http://127.0.0.1:8102"
-    upstream_model: "/models/hf/Qwen3-32B-AWQ"
-    vram_mb: 22000
-    params:
-      quant: "awq"
-      quantization: "awq_marlin"
-      gpu_memory_utilization: "0.92"
-      max_model_len: "32768"
-      kv_cache_dtype: "fp8"
-      enable_chunked_prefill: "true"
-
-  # MoE 30B-A3B, AWQ int4 through vLLM. Port 8103.
-  qwen3-30b-a3b-awq:
-    backend: vllm
-    base_url: "http://127.0.0.1:8103"
-    upstream_model: "/models/hf/Qwen3-30B-A3B-AWQ"
-    vram_mb: 21000
-    params:
-      quant: "awq"
-      quantization: "awq_marlin"
-      gpu_memory_utilization: "0.92"
-      max_model_len: "32768"
-      kv_cache_dtype: "fp8"
-      enable_chunked_prefill: "true"
+  # The vLLM arms of the dense and MoE bench grids (qwen3-32b-awq on 8102 and
+  # qwen3-30b-a3b-awq on 8103) were removed along with their weights to make room
+  # for Qwen3.8. The grids keep their ollama, TabbyAPI/EXL3 and llama.cpp arms;
+  # the cross-backend comparison at 30B/32B no longer has a vLLM column. Restore
+  # by re-adding the entries here and the manifest rows, then re-downloading.
 
   # MoE 30B-A3B, ~4bpw EXL3 through TabbyAPI/ExLlamaV3. The MoE arm on ExLlamaV3.
   qwen3-30b-a3b-exl3:
@@ -299,23 +324,57 @@ models:
   # the gateway's hot_swap unloads the current model before loading the next.
   #
   # Port assignments (must match 08-vllm.sh):
-  #   8100 - qwen3-14b-fp8
+  #   8100 - qwen3.8-27b-fp8
   #   8101 - gpt-oss-20b-vllm
   #
   # Requires scripts/08-vllm.sh to be run once to install vLLM and write the
-  # systemd units. Then enable and start: systemctl enable --now vllm-qwen3-14b-fp8
+  # systemd units. Then enable and start: systemctl enable --now vllm-gpt-oss-20b
 
-  # Qwen3-14B-FP8: dense 14B at FP8, 15.21 GiB, max_model_len 16384 (KV
-  # cache fits in the ~3.6 GiB remaining after weights + CUDA graphs).
-  # Run: systemctl start vllm-qwen3-14b-fp8
-  qwen3-14b-fp8:
+  # Qwen3.8-27B-FP8: the same model as the qwen3.8-27b GGUF entry above, at FP8
+  # through vLLM, kept as the quality reference the 4-bit quant is measured
+  # against rather than as a serving path.
+  #
+  # IT DOES NOT START ON THIS CARD. The entry is kept because the weights are on
+  # the box and the failure is worth recording, not because it serves. Nothing
+  # should route here by alias, and it is not autostarted.
+  #
+  # The checkpoint is 30.89 GB (28.77 GiB) of weights against 22.07 GiB usable at
+  # gpu_memory_utilization 0.92, which is the ceiling here: the Windows desktop
+  # compositor holds ~1.5 GiB of the 23.99 GiB the card reports, and 0.93 fails
+  # allocation by 0.02 GiB. So CPU offload is mandatory, and it is bracketed by
+  # two independent failures with no confirmed gap between them:
+  #
+  #   cpu_offload_gb 8, 10 -> "No available memory for the cache blocks", even at
+  #                           max_model_len 4096 and max_num_seqs 2.
+  #   cpu_offload_gb 12    -> the offload reaches the Gated DeltaNet weights, and
+  #                           the GDN prefill warmup is a Triton kernel that
+  #                           cannot address host memory: "Pointer argument
+  #                           cannot be accessed from Triton (cpu tensor?)".
+  #
+  # That upper bound is structural, not a tuning problem: unlike a plain
+  # transformer, this model cannot trade more offload for more KV room, because
+  # past ~12 GiB the offloaded tensors are ones a Triton kernel must touch.
+  # cpu_offload_gb 11 is the only untested value -- the one attempt at it
+  # overlapped a second tenant on the card and is not trustworthy. See
+  # bench/README.md.
+  #
+  # Host RAM is a prerequisite before retrying: CPU offload pins the offloaded
+  # weights, so WSL2 needs its .wslconfig memory ceiling well above the offload
+  # size. enforce_eager is on because CUDA graph capture over a partially
+  # offloaded model is where this falls over first.
+  qwen3.8-27b-fp8:
     backend: vllm
     base_url: "http://127.0.0.1:8100"
-    upstream_model: "/models/hf/Qwen3-14B-FP8"
-    vram_mb: 20000
+    upstream_model: "/models/hf/Qwen3.8-27B-FP8"
+    vram_mb: 23000
     params:
-      gpu_memory_utilization: "0.85"
-      max_model_len: "16384"
+      quant: "fp8"
+      quantization: ""          # native FP8 checkpoint; do not pass --quantization
+      gpu_memory_utilization: "0.92"   # 0.93 fails: desktop compositor holds ~1.5 GiB
+      max_model_len: "8192"
+      kv_cache_dtype: "fp8"
+      cpu_offload_gb: "11"      # only value not yet ruled out; see the bracket above
+      enforce_eager: true
       enable_chunked_prefill: "true"
 
   # gpt-oss-20b: native MXFP4 MoE, 12.8 GiB, FP8 KV cache, max_model_len 8192.

@@ -152,6 +152,107 @@ LLMBENCH_TOKEN=<token> go run ./cmd/llmbench -models muse-glimmer-30b \
   -arm 'b10380+mmproj (unsloth recipe)' -runtime-ver b10380
 ```
 
+## Qwen3.8 27B (2026-08-14)
+
+Two checkpoints of the same model, taken as far as this card allows: Unsloth's
+`UD-Q4_K_XL` GGUF on llama-server, and Qwen's native FP8 on vLLM. Only the first
+one serves. Rows are in `results/20260814.jsonl`.
+
+Qwen3.8 is a hybrid-attention VLM: 64 layers, of which 16 are full attention and
+48 are Gated DeltaNet linear attention (`full_attention_interval: 4`). That
+matters for every number below, because only the 16 full-attention layers hold a
+growing KV cache; the 48 GDN layers hold a fixed-size recurrent state per
+sequence. Native context is 262144 and the model is natively multimodal.
+
+| arm | 512 | 2048 | 8192 | 32768 | prefill @32K | VRAM |
+|---|---|---|---|---|---|---|
+| gguf-ud-q4_k_xl, b10431 + mmproj | 44.5 | 44.3 | 42.0 | 40.9 | 2.3k | 19.3 GB |
+| muse-glimmer-30b (reference, 08-12) | 51.2 | 50.8 | 48.8 | 46.6 | 3.4k | 19.0 GB |
+
+Decode tok/s at batch 1, gen 256, 3 reps. Read it as:
+
+- **It is a dense-27B-shaped decode curve, about 13% below Muse Glimmer.** Same
+  quant family, same build, near-identical resident cost, and Qwen3.8 gives up
+  roughly 6 tok/s at every context. The hybrid attention does not buy decode
+  speed at batch 1 -- the 48 GDN layers replace attention that was already cheap
+  at this scale, and the 16 full-attention layers still dominate.
+- **It buys context flatness instead.** 44.5 → 40.9 tok/s from 512 to 32K is an
+  8.1% falloff, against 8.9% for Muse Glimmer and 43% for the 3B-active MoE. The
+  KV cache grows in a quarter of the layers, so at q8_0 it costs ~16 KiB/token
+  rather than ~64. This is the reason to run the model, and 32K is nowhere near
+  where it stops -- it is just where this sweep stops.
+- **Prefill is the weak column.** 2.3k tok/s at 32K against 3.4k for Muse
+  Glimmer, and TTFT at 32K is 11.2 s. A full-window cold prompt is expensive
+  enough that prompt reuse is doing real work in an agent loop.
+
+### Vision
+
+| image | image tokens | prefill tok/s | TTFT | decode tok/s |
+|---|---|---|---|---|
+| 512x512 | 258 | 414 | 782 ms | 40.7 |
+| 1024x1024 | 1026 | 876 | 1.26 s | 44.5 |
+
+Same shape as Muse Glimmer -- expensive to ingest, free to reason over -- but
+the image-token prefill rate is lower again (414-876 tok/s against 760-1237),
+and the 512x512 cell decodes at 40.7 tok/s where the 1024 cell decodes at 44.5.
+The small-image cell is short enough (322 total prompt tokens) that projector
+encode is a visible fraction of the whole request, so read that row as a
+per-request cost, not a per-token rate. The BF16 projector is the only one
+published, as with Muse Glimmer.
+
+### Two caveats on this table
+
+Both are recorded rather than papered over, and both are cheap to clear on the
+next run:
+
+- The `quant` and `runtime` fields in `20260814.jsonl` are `unknown`. `llmbench`
+  labels rows from the gateway config, and it was pointed at a config that did
+  not yet carry the `qwen3.8-27b` entry this PR adds. The `arm` and
+  `runtime_ver` fields were set on the command line and are correct.
+- The measured server was running llama.cpp's default `repeat_penalty` of 1.1,
+  not the model card's 1.0. The unit this PR ships pins it (confirmed via
+  `/props`). Decode throughput is not meaningfully sensitive to a repetition
+  penalty, so the table stands; any *quality* claim about these rows does not,
+  because a penalised sampler is not the recipe.
+
+### FP8 on vLLM: does not serve on this card
+
+`Qwen/Qwen3.8-27B-FP8` is 28.77 GiB of weights against 22.07 GiB usable at
+`--gpu-memory-utilization 0.92`, which is the practical ceiling here because the
+Windows desktop compositor holds ~1.5 GiB of the 24 GiB (0.93 fails by 0.02
+GiB). CPU offload is therefore mandatory, and it is bracketed by two independent
+failures:
+
+| `--cpu-offload-gb` | result |
+|---|---|
+| 8 | `ValueError: No available memory for the cache blocks` |
+| 10 | same, including at `--max-model-len 8192` |
+| 11 | inconclusive, see below |
+| 12 | `ValueError: Pointer argument cannot be accessed from Triton (cpu tensor?)` |
+
+The upper failure is the interesting one and it is structural. At 12 GiB the
+offload reaches the Gated DeltaNet weights, and the GDN prefill kernel
+(`flash_linear_attention/ops/fused_gdn_prefill_post_conv.py`, via
+`vllm/model_executor/warmup/qwen_triton_warmup.py`) is a Triton kernel that
+cannot address host memory. So offload cannot be raised arbitrarily to buy KV
+room the way it can for a plain transformer: this model has a hard offload
+ceiling somewhere below 12 GiB, and at that ceiling there is still not enough
+VRAM left for a single cache block.
+
+The 11 GiB row is honestly inconclusive rather than negative. That attempt ran
+00:11-00:33, overlapping a second tenant on the same card (a GLM-OCR vLLM server
+under `/root/kvant-ocr`, whose bench units started at 00:03, 00:24, 00:27 and
+00:32), so its cache-block failure cannot be separated from the neighbour's VRAM
+use. The 8, 10 and 12 GiB rows all ran before that tenant started and are clean.
+Retesting 11 GiB on an idle card is the one experiment that would close this
+out; the bracket around it makes success unlikely but not impossible.
+
+The checkout stays on the box as a quality reference. Its gateway entry is
+present and deliberately not autostarted. Note also that this checkout is
+sharded as `outside.safetensors` plus `layers-0..63.safetensors`, not the usual
+`model-0000N-of-0000M` plus `index.json`, so a download loop written against the
+index scheme finds nothing and exits successfully having fetched no weights.
+
 ## Solve rate
 
 From the Mac (needs Docker, git, uv, and a built tomo image: `cd $LABS_DIR && lab build tomo`):

@@ -33,11 +33,23 @@ models:
     # ext4 disk text-only and 4 s warm; the floor keeps the same headroom over it.
     swap_s_max: 55
 
-  qwen3-32b-exl2:
+  qwen3.8-27b:
+    backend: llama
+    decode_tok_s_min: 35     # measured 40.9-44.5 across 512-32K, floor leaves margin
+    ttft_ms_max: 900         # measured 733 ms at 512 tokens of prompt
+    # Hybrid attention: only 16 of 64 layers hold a growing KV cache, so the 32K
+    # arm is 40.9 tok/s, not a cliff. Cold load was 25 s off the WSL ext4 disk
+    # including the 1.4 GiB BF16 projector; the floor keeps headroom over it.
+    swap_s_max: 55
+
+  # Key was qwen3-32b-exl2 and never matched anything: the gateway entry is
+  # qwen3-32b-exl3 (EXL3 superseded EXL2 as the 2026 quant format, and the
+  # manifest provisions EXL3 only). Renamed so the gate actually fires.
+  qwen3-32b-exl3:
     backend: tabby
     decode_tok_s_min: 40     # measured ~47-48 at 4bpw
     ttft_ms_max: 1200
-    swap_s_max: 35           # EXL2 load is slower than an Ollama pull-from-cache
+    swap_s_max: 35           # EXL3 load is slower than an Ollama pull-from-cache
 
   nomic-embed-text:
     backend: ollama

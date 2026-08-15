@@ -78,7 +78,17 @@ func buildVLLMArgs(entry config.ModelEntry) []string {
 	if paramBool(entry.Params, "enforce_eager", true) {
 		args = append(args, "--enforce-eager")
 	}
-	if q := paramString(entry.Params, "quantization", "awq"); q != "" {
+	// quantization defaults to empty, not "awq". It used to default to "awq" from
+	// when every vLLM entry on the roster was an AWQ checkout, which meant any
+	// entry that did not set the key got --quantization awq appended to it. That
+	// is wrong for a checkpoint whose weights are already in their served format:
+	// both remaining entries here (Qwen3.8-27B at FP8, gpt-oss-20b at MXFP4) carry
+	// the scheme in config.json and vLLM picks it up on its own, while an explicit
+	// --quantization awq makes it try to load fp8 tensors through the AWQ path and
+	// fail at startup. The bug never fired because the box runs vLLM from systemd
+	// units and the gateway adopts the healthy port instead of spawning, so this
+	// function's output was never exercised on those entries.
+	if q := paramString(entry.Params, "quantization", ""); q != "" {
 		args = append(args, "--quantization", q)
 	}
 	// An fp8 KV cache halves the KV footprint, which is what lets a 4-bit 32B
@@ -88,5 +98,39 @@ func buildVLLMArgs(entry config.ModelEntry) []string {
 	if kv := paramString(entry.Params, "kv_cache_dtype", ""); kv != "" {
 		args = append(args, "--kv-cache-dtype", kv)
 	}
+	// Spill this many GiB of weights to host RAM. The only reason to reach for it
+	// is a checkpoint that cannot fit at all -- Qwen3.8-27B-FP8 is 28.77 GiB
+	// against 23.99 GiB of card -- and it costs a PCIe round trip per offloaded
+	// layer per forward pass, so it is a correctness knob rather than a tuning
+	// one. Absent by default; the offloaded weights are pinned in host RAM, so
+	// the host needs the headroom before this is set.
+	if off := paramString(entry.Params, "cpu_offload_gb", ""); off != "" {
+		args = append(args, "--cpu-offload-gb", off)
+	}
+	// Chunked prefill was already a documented key on three model entries and was
+	// silently dropped here, so the flag never reached vLLM. Accepted as a bool or
+	// as the quoted "true" the existing entries write.
+	if paramBoolLoose(entry.Params, "enable_chunked_prefill", false) {
+		args = append(args, "--enable-chunked-prefill")
+	}
 	return args
+}
+
+// paramBoolLoose reads a boolean knob that config may express either as a YAML
+// bool or as a quoted string. The vLLM entries quote their numeric and boolean
+// params ("0.92", "true") while the llama entries do not, and a knob that only
+// understands one spelling goes missing without an error.
+func paramBoolLoose(params map[string]any, key string, def bool) bool {
+	if params == nil {
+		return def
+	}
+	switch v := params[key].(type) {
+	case bool:
+		return v
+	case string:
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
 }

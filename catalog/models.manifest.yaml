@@ -41,9 +41,12 @@ llama:
     - file: "Qwen3-14B-Q6_K.gguf"
       source: "hf:Qwen/Qwen3-14B-GGUF"
       note: "example dense GGUF for the llama-server backend"
-    # Muse Glimmer is provisioned by scripts/10-llamacpp-muse.sh, which builds
-    # llama.cpp from master (the arch is newer than every tagged win-cuda build)
-    # and stages these onto the WSL2 ext4 disk at /root/models/gguf.
+    # Muse Glimmer was provisioned by scripts/10-llamacpp-muse.sh, which has been
+    # removed (it enabled a systemd unit that grabbed the card on every WSL boot;
+    # see configs/llmgw.yaml). The weights are retained and still staged on the
+    # WSL2 ext4 disk at /root/models/gguf, and scripts/11-llamacpp-qwen38.sh
+    # builds the same shared llama.cpp checkout that serves them, so these rows
+    # stay accurate -- only the autostart is gone.
     - file: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf"
       source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
       note: "Meta Muse Glimmer 30B, dynamic 4-bit, 14.8 GiB; serves muse-glimmer-30b"
@@ -56,6 +59,15 @@ llama:
     - file: "mmproj-Muse-Glimmer-30B-BF16.gguf"
       source: "hf:unsloth/Muse-Glimmer-30B-GGUF"
       note: "Muse Glimmer vision projector; required for image input, needs llama-server --mmproj"
+    # Qwen3.8 is provisioned by scripts/11-llamacpp-qwen38.sh, which brings the
+    # same shared WSL2 llama.cpp checkout up to master and stages onto ext4 too.
+    # Its arch (qwen35) landed after every tagged win-cuda build, same as above.
+    - file: "Qwen3.8-27B-UD-Q4_K_XL.gguf"
+      source: "hf:unsloth/Qwen3.8-27B-GGUF"
+      note: "Qwen3.8 27B hybrid-attention VLM, dynamic 4-bit, 15.6 GiB; serves qwen3.8-27b"
+    - file: "mmproj-Qwen3.8-27B-BF16.gguf"
+      source: "hf:unsloth/Qwen3.8-27B-GGUF"
+      note: "Qwen3.8 vision projector, BF16; required for image and video input, needs llama-server --mmproj"
 
 # vLLM loads from a local AWQ/GPTQ checkout or an HF id. Process-driven backend;
 # slow to start, fast to serve. dir is the local checkout the gateway config's
@@ -63,15 +75,23 @@ llama:
 vllm:
   models_dir: "/models/hf"
   models:
-    - dir: "Qwen3-14B-FP8"
-      source: "hf:Qwen/Qwen3-14B-FP8"
-      note: "dense 14B FP8, the small-tier vLLM model (fits FP8 under 24 GB)"
-    - dir: "Qwen3-32B-AWQ"
-      source: "hf:Qwen/Qwen3-32B-AWQ"
-      note: "dense 32B AWQ int4; vLLM arm of the dense bench grid, --quantization awq_marlin"
-    - dir: "Qwen3-30B-A3B-AWQ"
-      source: "hf:QuixiAI/Qwen3-30B-A3B-AWQ"
-      note: "MoE 30B-A3B AWQ int4; vLLM arm of the MoE bench grid, --quantization awq_marlin. Qwen ships no public AWQ for the base MoE, so this community quant of the same base is the fair match to the GGUF and EXL3 arms."
+    # Qwen3-14B-FP8, Qwen3-32B-AWQ and Qwen3-30B-A3B-AWQ were removed from the box
+    # (51 GB) to make room for Qwen3.8. Their gateway entries are gone too; the
+    # dense and MoE bench grids keep every arm except the vLLM column. To restore
+    # one, re-add its row and its models entry and re-download.
+    #
+    # This checkout is sharded as outside.safetensors plus layers-0..63.safetensors
+    # rather than the usual model-0000N-of-0000M plus index.json, so a fetch loop
+    # written against the index scheme finds nothing to download and exits clean.
+    - dir: "Qwen3.8-27B-FP8"
+      source: "hf:Qwen/Qwen3.8-27B-FP8"
+      note: "Qwen3.8 27B at native FP8, 30.89 GB. Does not start on the 24 GB card: too little offload leaves no room for cache blocks, too much puts the Gated DeltaNet weights where a Triton kernel cannot reach them. Staged for a future/larger card. See configs/llmgw.yaml and bench/README.md."
+    # gpt-oss-20b has a gateway entry (gpt-oss-20b-vllm) but has never had a row
+    # here, so a rebuild from this manifest would not stage it. Recorded rather
+    # than fixed blind: the checkout on the box is 13 GB under this models_dir.
+    - dir: "gpt-oss-20b"
+      source: "hf:openai/gpt-oss-20b"
+      note: "native MXFP4 MoE, 12.8 GiB; serves gpt-oss-20b-vllm. Quantization scheme is in config.json, so no --quantization flag."
 
 # inproc loads a GGUF directly into the gateway process via the in-process cgo
 # engine (the zero-proxy high-throughput path, spec 2065 docs 15 to 17). file is

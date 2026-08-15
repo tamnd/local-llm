@@ -92,6 +92,12 @@ func TestBuildVLLMArgsAWQ(t *testing.T) {
 // TestBuildVLLMArgsNoKVCacheDtype confirms the fp8 flag is opt-in: a model that
 // does not set kv_cache_dtype keeps vLLM's default fp16 cache, so the flag must
 // be absent rather than emitted empty.
+//
+// --quantization is opt-in for the same reason. It used to default to awq,
+// which was invisible only because every vLLM entry happened to be AWQ; a
+// checkpoint that carries its own scheme in config.json (native FP8, MXFP4)
+// must not have awq forced onto it. This asserts the flag is now absent unless
+// asked for; TestBuildVLLMArgs covers the case where it is set.
 func TestBuildVLLMArgsNoKVCacheDtype(t *testing.T) {
 	entry := config.ModelEntry{
 		BaseURL:       "http://127.0.0.1:8100",
@@ -102,8 +108,11 @@ func TestBuildVLLMArgsNoKVCacheDtype(t *testing.T) {
 	if hasFlag(args, "--kv-cache-dtype") {
 		t.Errorf("kv-cache-dtype should be absent without the param: %v", args)
 	}
-	// Sanity: the default quant still lands so the arg builder is not a no-op.
-	if !strings.Contains(strings.Join(args, " "), "--quantization") {
-		t.Errorf("expected a default --quantization: %v", args)
+	if strings.Contains(strings.Join(args, " "), "--quantization") {
+		t.Errorf("quantization should be absent without the param: %v", args)
+	}
+	// Sanity: the builder is not a no-op.
+	if !hasFlagValue(args, "--port", "8100") {
+		t.Errorf("expected the port to be derived from base_url: %v", args)
 	}
 }
